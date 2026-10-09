@@ -39,6 +39,7 @@ import (
 	"github.com/projectdiscovery/subfinder/v2/pkg/subscraping/sources/intelx"
 	"github.com/projectdiscovery/subfinder/v2/pkg/subscraping/sources/leakix"
 	"github.com/projectdiscovery/subfinder/v2/pkg/subscraping/sources/merklemap"
+	"github.com/projectdiscovery/subfinder/v2/pkg/subscraping/sources/ndxer"
 	"github.com/projectdiscovery/subfinder/v2/pkg/subscraping/sources/netlas"
 	"github.com/projectdiscovery/subfinder/v2/pkg/subscraping/sources/onyphe"
 	"github.com/projectdiscovery/subfinder/v2/pkg/subscraping/sources/profundis"
@@ -70,7 +71,7 @@ import (
 
 var AllSources = newSources()
 
-func newSources() [54]subscraping.Source {
+func newSources() [55]subscraping.Source {
 	return [...]subscraping.Source{
 		&alienvault.Source{},
 		&anubis.Source{},
@@ -100,6 +101,7 @@ func newSources() [54]subscraping.Source {
 		&intelx.Source{},
 		&leakix.Source{},
 		&merklemap.Source{},
+		&ndxer.Source{},
 		&netlas.Source{},
 		&onyphe.Source{},
 		&profundis.Source{},

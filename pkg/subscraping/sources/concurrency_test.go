@@ -44,6 +44,7 @@ import (
 	"github.com/projectdiscovery/subfinder/v2/pkg/subscraping/sources/intelx"
 	"github.com/projectdiscovery/subfinder/v2/pkg/subscraping/sources/leakix"
 	"github.com/projectdiscovery/subfinder/v2/pkg/subscraping/sources/merklemap"
+	"github.com/projectdiscovery/subfinder/v2/pkg/subscraping/sources/ndxer"
 	"github.com/projectdiscovery/subfinder/v2/pkg/subscraping/sources/netlas"
 	"github.com/projectdiscovery/subfinder/v2/pkg/subscraping/sources/onyphe"
 	"github.com/projectdiscovery/subfinder/v2/pkg/subscraping/sources/profundis"
@@ -165,6 +166,7 @@ func TestSourceConcurrentResults(t *testing.T) {
 		{&crtname.Source{}, "one.example.com\ntwo.example.com\nthree.example.com\n", 1, true},
 		{&driftnet.Source{}, `{"summary":{"values":{"one.example.com":1,"two.example.com":1,"three.example.com":1}}}`, 4, false},
 		{&merklemap.Source{}, `{"count":3,"results":[{"hostname":"one.example.com"},{"hostname":"two.example.com"},{"hostname":"three.example.com"}]}`, 1, true},
+		{&ndxer.Source{}, `{"meta":{"next_cursor":null},"matches":[{"name":"one.example.com"},{"name":"two.example.com"},{"name":"three.example.com"}]}`, 1, true},
 		{&shodan.Source{}, `{"domain":"example.com","subdomains":["one","two","three"]}`, 1, true},
 		{&sitedossier.Source{}, "one.example.com two.example.com three.example.com", 1, false},
 		{&submd.Source{}, "one.example.com\ntwo.example.com\nthree.example.com\n", 1, false},
@@ -447,6 +449,7 @@ func concurrencySources() []subscraping.Source {
 		&intelx.Source{},
 		&leakix.Source{},
 		&merklemap.Source{},
+		&ndxer.Source{},
 		&netlas.Source{},
 		&onyphe.Source{},
 		&profundis.Source{},
