@@ -346,7 +346,7 @@ func printRelatedBanner(seed string, classes []string, result *relatedResult, ad
 	sb.WriteString("  Turn off: -no-ndxer-related\n")
 	sb.WriteString("  Inspect the evidence:\n")
 	fmt.Fprintf(&sb, "    curl -s -H \"Authorization: Bearer $NDXER_API_KEY\" \"%s?q=%s\"\n", relatedURL, seed)
-	fmt.Fprintf(&sb, "    https://ndxer.com/app/lookup/related/?q=%s\n", seed)
+	fmt.Fprintf(&sb, "    https://ndxer.com/app/investigations/?q=%s\n", seed)
 	sb.WriteString(rule + "\n\n")
 	_, _ = io.WriteString(relatedBannerWriter, sb.String())
 }

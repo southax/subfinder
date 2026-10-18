@@ -169,7 +169,7 @@ func TestRunnerAddsRelatedDomains(t *testing.T) {
 		"about 1 unit per page for each added domain (1 domains)",
 		"-no-ndxer-related",
 		`curl -s -H "Authorization: Bearer $NDXER_API_KEY" "https://api.ndxer.com/v1/related/?q=seed.example"`,
-		"https://ndxer.com/app/lookup/related/?q=seed.example",
+		"https://ndxer.com/app/investigations/?q=seed.example",
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("banner lacks %q:\n%s", want, text)
