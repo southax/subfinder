@@ -16,6 +16,8 @@ import (
 // OutputWriter outputs content to writers.
 type OutputWriter struct {
 	JSON bool
+	// tag marks hosts under a domain ndxer added to the run (-oJ only).
+	tag *relatedTag
 }
 
 type jsonSourceResult struct {
@@ -23,6 +25,8 @@ type jsonSourceResult struct {
 	Input               string `json:"input"`
 	Source              string `json:"source"`
 	WildcardCertificate bool   `json:"wildcard_certificate,omitempty"`
+	NdxerSeed           string `json:"ndxer_seed,omitempty"`
+	NdxerClass          string `json:"ndxer_class,omitempty"`
 }
 
 type jsonSourceIPResult struct {
@@ -31,6 +35,8 @@ type jsonSourceIPResult struct {
 	Input               string `json:"input"`
 	Source              string `json:"source"`
 	WildcardCertificate bool   `json:"wildcard_certificate,omitempty"`
+	NdxerSeed           string `json:"ndxer_seed,omitempty"`
+	NdxerClass          string `json:"ndxer_class,omitempty"`
 }
 
 type jsonSourcesResult struct {
@@ -38,6 +44,8 @@ type jsonSourcesResult struct {
 	Input               string   `json:"input"`
 	Sources             []string `json:"sources"`
 	WildcardCertificate bool     `json:"wildcard_certificate,omitempty"`
+	NdxerSeed           string   `json:"ndxer_seed,omitempty"`
+	NdxerClass          string   `json:"ndxer_class,omitempty"`
 }
 
 // NewOutputWriter creates a new OutputWriter
@@ -75,11 +83,18 @@ func (o *OutputWriter) createFile(filename string, appendToFile bool) (*os.File,
 	return file, nil
 }
 
+func (o *OutputWriter) tagFields() (string, string) {
+	if o.tag == nil {
+		return "", ""
+	}
+	return o.tag.Seed, o.tag.Class
+}
+
 // WriteHostIP writes the output list of subdomain to an io.Writer
 func (o *OutputWriter) WriteHostIP(input string, results map[string]resolve.Result, writer io.Writer) error {
 	var err error
 	if o.JSON {
-		err = writeJSONHostIP(input, results, writer)
+		err = writeJSONHostIP(o, input, results, writer)
 	} else {
 		err = writePlainHostIP(input, results, writer)
 	}
@@ -110,7 +125,7 @@ func writePlainHostIP(_ string, results map[string]resolve.Result, writer io.Wri
 	return bufwriter.Flush()
 }
 
-func writeJSONHostIP(input string, results map[string]resolve.Result, writer io.Writer) error {
+func writeJSONHostIP(o *OutputWriter, input string, results map[string]resolve.Result, writer io.Writer) error {
 	encoder := jsoniter.NewEncoder(writer)
 
 	var data jsonSourceIPResult
@@ -119,6 +134,7 @@ func writeJSONHostIP(input string, results map[string]resolve.Result, writer io.
 		data.Host = result.Host
 		data.IP = result.IP
 		data.Input = input
+		data.NdxerSeed, data.NdxerClass = o.tagFields()
 		data.Source = result.Source
 		data.WildcardCertificate = result.WildcardCertificate
 		err := encoder.Encode(&data)
@@ -143,7 +159,7 @@ func (o *OutputWriter) WriteHostNoWildcard(input string, results map[string]reso
 func (o *OutputWriter) WriteHost(input string, results map[string]resolve.HostEntry, writer io.Writer) error {
 	var err error
 	if o.JSON {
-		err = writeJSONHost(input, results, writer)
+		err = writeJSONHost(o, input, results, writer)
 	} else {
 		err = writePlainHost(input, results, writer)
 	}
@@ -170,13 +186,14 @@ func writePlainHost(_ string, results map[string]resolve.HostEntry, writer io.Wr
 	return bufwriter.Flush()
 }
 
-func writeJSONHost(input string, results map[string]resolve.HostEntry, writer io.Writer) error {
+func writeJSONHost(o *OutputWriter, input string, results map[string]resolve.HostEntry, writer io.Writer) error {
 	encoder := jsoniter.NewEncoder(writer)
 
 	var data jsonSourceResult
 	for _, result := range results {
 		data.Host = result.Host
 		data.Input = input
+		data.NdxerSeed, data.NdxerClass = o.tagFields()
 		data.Source = result.Source
 		data.WildcardCertificate = result.WildcardCertificate
 		err := encoder.Encode(data)
@@ -191,14 +208,14 @@ func writeJSONHost(input string, results map[string]resolve.HostEntry, writer io
 func (o *OutputWriter) WriteSourceHost(input string, sourceMap map[string]map[string]struct{}, writer io.Writer) error {
 	var err error
 	if o.JSON {
-		err = writeSourceJSONHost(input, sourceMap, writer)
+		err = writeSourceJSONHost(o, input, sourceMap, writer)
 	} else {
 		err = writeSourcePlainHost(input, sourceMap, writer)
 	}
 	return err
 }
 
-func writeSourceJSONHost(input string, sourceMap map[string]map[string]struct{}, writer io.Writer) error {
+func writeSourceJSONHost(o *OutputWriter, input string, sourceMap map[string]map[string]struct{}, writer io.Writer) error {
 	encoder := jsoniter.NewEncoder(writer)
 
 	var data jsonSourcesResult
@@ -206,6 +223,7 @@ func writeSourceJSONHost(input string, sourceMap map[string]map[string]struct{},
 	for host, sources := range sourceMap {
 		data.Host = host
 		data.Input = input
+		data.NdxerSeed, data.NdxerClass = o.tagFields()
 		keys := make([]string, 0, len(sources))
 		for source := range sources {
 			keys = append(keys, source)

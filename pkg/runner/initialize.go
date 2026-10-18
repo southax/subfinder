@@ -36,6 +36,26 @@ func (r *Runner) initializePassiveEngine(providerKeys map[string][]string) {
 		return passive.NewWithProviderConfig(sources, excluded, all, recursive, keys)
 	}
 	r.passiveAgent = r.newPassiveAgent()
+	r.ndxerKeys = keys["ndxer"]
+}
+
+// initializeRelated enables related-scope expansion when an ndxer key is
+// configured (provider config or NDXER_API_KEY) and it was not turned off.
+func (r *Runner) initializeRelated() error {
+	classes, err := parseRelatedClasses(r.options.NdxerRelatedClasses)
+	if err != nil {
+		return err
+	}
+	if r.options.NoNdxerRelated {
+		return nil
+	}
+	for _, key := range r.ndxerKeys {
+		if key = strings.TrimSpace(key); key != "" {
+			r.related = &relatedSettings{key: key, classes: classes}
+			break
+		}
+	}
+	return nil
 }
 
 // initializeResolver creates the resolver used to resolve the found subdomains

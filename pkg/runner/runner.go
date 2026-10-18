@@ -38,6 +38,9 @@ type Runner struct {
 	domainOutput      bool
 	matchRegexes      []*regexp.Regexp
 	filterRegexes     []*regexp.Regexp
+	ndxerKeys         []string
+	related           *relatedSettings
+	relatedTag        *relatedTag
 }
 
 // NewRunner creates a new runner struct instance by parsing
@@ -64,6 +67,11 @@ func NewRunner(options *Options) (*Runner, error) {
 
 	// Initialize the passive subdomain enumeration engine
 	runner.initializePassiveEngine(providerKeys)
+
+	// Related-scope expansion is on whenever an ndxer key is configured.
+	if err := runner.initializeRelated(); err != nil {
+		return nil, err
+	}
 
 	// Initialize the subdomain resolver
 	err := runner.initializeResolver()
@@ -182,7 +190,7 @@ func (r *Runner) EnumerateMultipleDomainsWithCtx(ctx context.Context, reader io.
 		}
 	}()
 
-	jobs := make(chan string)
+	jobs := make(chan relatedJob)
 
 	var wg sync.WaitGroup
 	var firstError error
@@ -196,15 +204,16 @@ func (r *Runner) EnumerateMultipleDomainsWithCtx(ctx context.Context, reader io.
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for domain := range jobs {
+			for job := range jobs {
 				if ctx.Err() != nil {
 					return
 				}
 
 				worker := batch
 				worker.passiveAgent = r.newPassiveAgent()
+				worker.relatedTag = job.tag
 
-				if _, err := worker.EnumerateSingleDomainWithCtx(ctx, domain, writers); err != nil {
+				if _, err := worker.EnumerateSingleDomainWithCtx(ctx, job.domain, writers); err != nil {
 					fail(err)
 					return
 				}
@@ -215,20 +224,17 @@ func (r *Runner) EnumerateMultipleDomainsWithCtx(ctx context.Context, reader io.
 	scanner := bufio.NewScanner(reader)
 	ip := regexp.MustCompile(`^([0-9\.]+$)`)
 
-scan:
-	for ctx.Err() == nil && scanner.Scan() {
-		domain := replacer.Replace(preprocessDomain(scanner.Text()))
-		if domain == "" || (options.ExcludeIps && ip.MatchString(domain)) {
-			continue
-		}
-
+	// queue validates a domain's destinations and hands it to a worker. It
+	// returns false when the run must stop.
+	queue := func(job relatedJob) bool {
+		domain := job.domain
 		// Validate destinations before spending provider requests. Open the shared
 		// output only after the first accepted domain so empty input has no effects.
 		if options.OutputFile != "" && sharedFile == nil {
 			sharedFile, err = NewOutputWriter(options.JSON).createFile(options.OutputFile, true)
 			if err != nil {
 				fail(err)
-				break
+				return false
 			}
 
 			writers = append(append([]io.Writer(nil), writers...), sharedFile)
@@ -250,19 +256,58 @@ scan:
 
 			if openErr != nil {
 				fail(openErr)
-				break
+				return false
 			}
 		}
 
 		select {
 		case <-ctx.Done():
-			break scan
-		case jobs <- domain:
+			return false
+		case jobs <- job:
+			return true
+		}
+	}
+
+	var inputs []string
+	for ctx.Err() == nil && scanner.Scan() {
+		domain := replacer.Replace(preprocessDomain(scanner.Text()))
+		if domain == "" || (options.ExcludeIps && ip.MatchString(domain)) {
+			continue
+		}
+		inputs = append(inputs, domain)
+	}
+
+	// Related-scope expansion needs every input first, so a domain the user
+	// passed is never added a second time as someone's relative.
+	var expansion *related
+	if r.related != nil {
+		expansion = &related{
+			client:  newRelatedClient(r.related.key, time.Duration(max(options.Timeout, 1))*time.Second),
+			classes: r.related.classes,
+			seen:    make(map[string]struct{}, len(inputs)),
+		}
+		for _, domain := range inputs {
+			expansion.seen[strings.ToLower(domain)] = struct{}{}
 		}
 	}
 
 	if err := scanner.Err(); err != nil {
 		fail(fmt.Errorf("read domains: %w", err))
+	}
+
+queueing:
+	for _, domain := range inputs {
+		if ctx.Err() != nil || !queue(relatedJob{domain: domain}) {
+			break
+		}
+		if expansion == nil || ip.MatchString(domain) {
+			continue
+		}
+		for _, job := range expansion.expand(ctx, domain) {
+			if !queue(job) {
+				break queueing
+			}
+		}
 	}
 
 	close(jobs)

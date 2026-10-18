@@ -32,43 +32,45 @@ var (
 // Options contains the configuration options for tuning
 // the subdomain enumeration process.
 type Options struct {
-	Verbose            bool                // Verbose flag indicates whether to show verbose output or not
-	NoColor            bool                // NoColor disables the colored output
-	JSON               bool                // JSON specifies whether to use json for output format or text file
-	HostIP             bool                // HostIP specifies whether to write subdomains in host:ip format
-	Silent             bool                // Silent suppresses any extra text and only writes subdomains to screen
-	ListSources        bool                // ListSources specifies whether to list all available sources
-	RemoveWildcard     bool                // RemoveWildcard specifies whether to remove potential wildcard or dead subdomains from the results.
-	CaptureSources     bool                // CaptureSources specifies whether to save all sources that returned a specific domains or just the first source
-	Stdin              bool                // Stdin specifies whether stdin input was given to the process
-	Version            bool                // Version specifies if we should just show version and exit
-	OnlyRecursive      bool                // Recursive specifies whether to use only recursive subdomain enumeration sources
-	All                bool                // All specifies whether to use all (slow) sources.
-	Statistics         bool                // Statistics specifies whether to report source statistics
-	Threads            int                 // Threads bounds concurrent domains and total active DNS lookups
-	Timeout            int                 // Timeout is the seconds to wait for sources to respond
-	MaxEnumerationTime int                 // MaxEnumerationTime is the maximum amount of time in minutes to wait for enumeration
-	Domain             goflags.StringSlice // Domain is the domain to find subdomains for
-	DomainsFile        string              // DomainsFile is the file containing list of domains to find subdomains for
-	Output             io.Writer
-	OutputFile         string               // Output is the file to write found subdomains to.
-	OutputDirectory    string               // OutputDirectory is the directory to write results to in case list of domains is given
-	Sources            goflags.StringSlice  `yaml:"sources,omitempty"`         // Sources contains a comma-separated list of sources to use for enumeration
-	ExcludeSources     goflags.StringSlice  `yaml:"exclude-sources,omitempty"` // ExcludeSources contains the comma-separated sources to not include in the enumeration process
-	Resolvers          goflags.StringSlice  `yaml:"resolvers,omitempty"`       // Resolvers is the comma-separated resolvers to use for enumeration
-	ResolverList       string               // ResolverList is a text file containing list of resolvers to use for enumeration
-	Config             string               // Config contains the location of the config file
-	ProviderConfig     string               // ProviderConfig contains the location of the provider config file
-	Proxy              string               // HTTP proxy
-	RateLimit          int                  // Global maximum number of HTTP requests to send per second
-	RateLimits         goflags.RateLimitMap // Maximum number of HTTP requests to send per second
-	ExcludeIps         bool
-	Match              goflags.StringSlice
-	Filter             goflags.StringSlice
-	MatchRegex         goflags.StringSlice // MatchRegex contains regular expressions to include in results
-	FilterRegex        goflags.StringSlice // FilterRegex contains regular expressions to exclude from results
-	ResultCallback     OnResultCallback    // OnResult callback
-	DisableUpdateCheck bool                // DisableUpdateCheck disable update checking
+	Verbose             bool                // Verbose flag indicates whether to show verbose output or not
+	NoColor             bool                // NoColor disables the colored output
+	JSON                bool                // JSON specifies whether to use json for output format or text file
+	HostIP              bool                // HostIP specifies whether to write subdomains in host:ip format
+	Silent              bool                // Silent suppresses any extra text and only writes subdomains to screen
+	ListSources         bool                // ListSources specifies whether to list all available sources
+	RemoveWildcard      bool                // RemoveWildcard specifies whether to remove potential wildcard or dead subdomains from the results.
+	CaptureSources      bool                // CaptureSources specifies whether to save all sources that returned a specific domains or just the first source
+	Stdin               bool                // Stdin specifies whether stdin input was given to the process
+	Version             bool                // Version specifies if we should just show version and exit
+	OnlyRecursive       bool                // Recursive specifies whether to use only recursive subdomain enumeration sources
+	All                 bool                // All specifies whether to use all (slow) sources.
+	Statistics          bool                // Statistics specifies whether to report source statistics
+	Threads             int                 // Threads bounds concurrent domains and total active DNS lookups
+	Timeout             int                 // Timeout is the seconds to wait for sources to respond
+	MaxEnumerationTime  int                 // MaxEnumerationTime is the maximum amount of time in minutes to wait for enumeration
+	Domain              goflags.StringSlice // Domain is the domain to find subdomains for
+	NdxerRelatedClasses goflags.StringSlice // NdxerRelatedClasses is the classes of related domains ndxer adds to the run (subject, review)
+	NoNdxerRelated      bool                // NoNdxerRelated turns off related-scope expansion
+	DomainsFile         string              // DomainsFile is the file containing list of domains to find subdomains for
+	Output              io.Writer
+	OutputFile          string               // Output is the file to write found subdomains to.
+	OutputDirectory     string               // OutputDirectory is the directory to write results to in case list of domains is given
+	Sources             goflags.StringSlice  `yaml:"sources,omitempty"`         // Sources contains a comma-separated list of sources to use for enumeration
+	ExcludeSources      goflags.StringSlice  `yaml:"exclude-sources,omitempty"` // ExcludeSources contains the comma-separated sources to not include in the enumeration process
+	Resolvers           goflags.StringSlice  `yaml:"resolvers,omitempty"`       // Resolvers is the comma-separated resolvers to use for enumeration
+	ResolverList        string               // ResolverList is a text file containing list of resolvers to use for enumeration
+	Config              string               // Config contains the location of the config file
+	ProviderConfig      string               // ProviderConfig contains the location of the provider config file
+	Proxy               string               // HTTP proxy
+	RateLimit           int                  // Global maximum number of HTTP requests to send per second
+	RateLimits          goflags.RateLimitMap // Maximum number of HTTP requests to send per second
+	ExcludeIps          bool
+	Match               goflags.StringSlice
+	Filter              goflags.StringSlice
+	MatchRegex          goflags.StringSlice // MatchRegex contains regular expressions to include in results
+	FilterRegex         goflags.StringSlice // FilterRegex contains regular expressions to exclude from results
+	ResultCallback      OnResultCallback    // OnResult callback
+	DisableUpdateCheck  bool                // DisableUpdateCheck disable update checking
 
 	// MaxResults limits the number of results requested per source.
 	// A value of 0 (default) means no limit. Sources that paginate honor this
@@ -103,6 +105,8 @@ func ParseOptions() *Options {
 		flagSet.StringSliceVarP(&options.Sources, "sources", "s", nil, "specific sources to use for discovery (-s crtsh,github). Use -ls to display all available sources.", goflags.NormalizedStringSliceOptions),
 		flagSet.BoolVar(&options.OnlyRecursive, "recursive", false, "use only sources that can handle subdomains recursively rather than both recursive and non-recursive sources"),
 		flagSet.BoolVar(&options.All, "all", false, "use all sources for enumeration (slow)"),
+		flagSet.StringSliceVar(&options.NdxerRelatedClasses, "ndxer-related-classes", []string{"subject"}, "classes of related domains ndxer adds to the run (subject, review); with an ndxer key every input domain is expanded to the domains ndxer links to the same owner", goflags.NormalizedStringSliceOptions),
+		flagSet.BoolVar(&options.NoNdxerRelated, "no-ndxer-related", false, "do not add the related domains ndxer links to the same owner"),
 		flagSet.StringSliceVarP(&options.ExcludeSources, "exclude-sources", "es", nil, "sources to exclude from enumeration (-es alienvault,zoomeyeapi)", goflags.NormalizedStringSliceOptions),
 	)
 

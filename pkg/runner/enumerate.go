@@ -178,6 +178,7 @@ func (r *Runner) EnumerateSingleDomainWithCtx(ctx context.Context, domain string
 	}
 
 	outputWriter := NewOutputWriter(r.options.JSON)
+	outputWriter.tag = r.relatedTag
 
 	var file *os.File
 
