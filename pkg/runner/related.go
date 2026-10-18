@@ -335,7 +335,10 @@ func printRelatedBanner(seed string, classes []string, result *relatedResult, ad
 	if result.Stopped != "" {
 		fmt.Fprintf(&sb, "  INCOMPLETE: %s.\n", result.Stopped)
 	}
-	fmt.Fprintf(&sb, "  Units charged: %d (%d page", result.Units, result.Pages)
+	if total > 0 {
+		fmt.Fprintf(&sb, "  ndxer source: about 1 unit per page for each added domain (%d domains), charged on top of the units below.\n", total)
+	}
+	fmt.Fprintf(&sb, "  Units charged by the related lookup: %d (%d page", result.Units, result.Pages)
 	if result.Pages != 1 {
 		sb.WriteString("s")
 	}

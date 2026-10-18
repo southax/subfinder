@@ -268,20 +268,37 @@ func (r *Runner) EnumerateMultipleDomainsWithCtx(ctx context.Context, reader io.
 		}
 	}
 
-	var inputs []string
-	for ctx.Err() == nil && scanner.Scan() {
-		domain := replacer.Replace(preprocessDomain(scanner.Text()))
-		if domain == "" || (options.ExcludeIps && ip.MatchString(domain)) {
-			continue
+	if r.related == nil {
+		// Stock behaviour: stream the input, one domain at a time.
+	stream:
+		for ctx.Err() == nil && scanner.Scan() {
+			domain := replacer.Replace(preprocessDomain(scanner.Text()))
+			if domain == "" || (options.ExcludeIps && ip.MatchString(domain)) {
+				continue
+			}
+			if !queue(relatedJob{domain: domain}) {
+				break stream
+			}
 		}
-		inputs = append(inputs, domain)
-	}
+		if err := scanner.Err(); err != nil {
+			fail(fmt.Errorf("read domains: %w", err))
+		}
+	} else {
+		// Related-scope expansion needs every input first, so a domain the
+		// user passed is never added a second time as someone's relative.
+		var inputs []string
+		for ctx.Err() == nil && scanner.Scan() {
+			domain := replacer.Replace(preprocessDomain(scanner.Text()))
+			if domain == "" || (options.ExcludeIps && ip.MatchString(domain)) {
+				continue
+			}
+			inputs = append(inputs, domain)
+		}
+		if err := scanner.Err(); err != nil {
+			fail(fmt.Errorf("read domains: %w", err))
+		}
 
-	// Related-scope expansion needs every input first, so a domain the user
-	// passed is never added a second time as someone's relative.
-	var expansion *related
-	if r.related != nil {
-		expansion = &related{
+		expansion := &related{
 			client:  newRelatedClient(r.related.key, time.Duration(max(options.Timeout, 1))*time.Second),
 			classes: r.related.classes,
 			seen:    make(map[string]struct{}, len(inputs)),
@@ -289,23 +306,19 @@ func (r *Runner) EnumerateMultipleDomainsWithCtx(ctx context.Context, reader io.
 		for _, domain := range inputs {
 			expansion.seen[strings.ToLower(domain)] = struct{}{}
 		}
-	}
 
-	if err := scanner.Err(); err != nil {
-		fail(fmt.Errorf("read domains: %w", err))
-	}
-
-queueing:
-	for _, domain := range inputs {
-		if ctx.Err() != nil || !queue(relatedJob{domain: domain}) {
-			break
-		}
-		if expansion == nil || ip.MatchString(domain) {
-			continue
-		}
-		for _, job := range expansion.expand(ctx, domain) {
-			if !queue(job) {
-				break queueing
+	queueing:
+		for _, domain := range inputs {
+			if ctx.Err() != nil || !queue(relatedJob{domain: domain}) {
+				break
+			}
+			if ip.MatchString(domain) {
+				continue
+			}
+			for _, job := range expansion.expand(ctx, domain) {
+				if !queue(job) {
+					break queueing
+				}
 			}
 		}
 	}
