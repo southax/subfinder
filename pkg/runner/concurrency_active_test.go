@@ -13,7 +13,7 @@ import (
 
 	"github.com/miekg/dns"
 	"github.com/projectdiscovery/dnsx/libs/dnsx"
-	"github.com/projectdiscovery/subfinder/v2/pkg/resolve"
+	"github.com/southax/subfinder/v2/pkg/resolve"
 )
 
 func activeTestResolver(t *testing.T, handler dns.HandlerFunc) *resolve.Resolver {

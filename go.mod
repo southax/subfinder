@@ -1,4 +1,4 @@
-module github.com/projectdiscovery/subfinder/v2
+module github.com/southax/subfinder/v2
 
 go 1.26.10
 

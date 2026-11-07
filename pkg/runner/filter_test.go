@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/projectdiscovery/goflags"
-	"github.com/projectdiscovery/subfinder/v2/pkg/resolve"
+	"github.com/southax/subfinder/v2/pkg/resolve"
 	"github.com/stretchr/testify/require"
 )
 

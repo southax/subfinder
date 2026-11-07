@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"github.com/projectdiscovery/ratelimit"
-	"github.com/projectdiscovery/subfinder/v2/pkg/subscraping"
 	mapsutil "github.com/projectdiscovery/utils/maps"
+	"github.com/southax/subfinder/v2/pkg/subscraping"
 )
 
 type EnumerationOptions struct {

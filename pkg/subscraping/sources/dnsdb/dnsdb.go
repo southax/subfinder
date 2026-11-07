@@ -16,7 +16,7 @@ import (
 
 	jsoniter "github.com/json-iterator/go"
 
-	"github.com/projectdiscovery/subfinder/v2/pkg/subscraping"
+	"github.com/southax/subfinder/v2/pkg/subscraping"
 )
 
 const urlBase string = "https://api.dnsdb.info/dnsdb/v2"

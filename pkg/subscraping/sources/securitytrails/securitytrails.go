@@ -13,8 +13,8 @@ import (
 
 	jsoniter "github.com/json-iterator/go"
 
-	"github.com/projectdiscovery/subfinder/v2/pkg/subscraping"
 	"github.com/projectdiscovery/utils/ptr"
+	"github.com/southax/subfinder/v2/pkg/subscraping"
 )
 
 type response struct {

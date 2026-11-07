@@ -7,9 +7,9 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/projectdiscovery/gologger"
-	"github.com/projectdiscovery/subfinder/v2/pkg/passive"
-	"github.com/projectdiscovery/subfinder/v2/pkg/subscraping"
 	fileutil "github.com/projectdiscovery/utils/file"
+	"github.com/southax/subfinder/v2/pkg/passive"
+	"github.com/southax/subfinder/v2/pkg/subscraping"
 )
 
 // createProviderConfigYAML marshals the input map to the given location on the disk

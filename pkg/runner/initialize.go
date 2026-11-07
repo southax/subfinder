@@ -7,9 +7,9 @@ import (
 	"strings"
 
 	"github.com/projectdiscovery/dnsx/libs/dnsx"
-	"github.com/projectdiscovery/subfinder/v2/pkg/passive"
-	"github.com/projectdiscovery/subfinder/v2/pkg/resolve"
-	"github.com/projectdiscovery/subfinder/v2/pkg/subscraping"
+	"github.com/southax/subfinder/v2/pkg/passive"
+	"github.com/southax/subfinder/v2/pkg/resolve"
+	"github.com/southax/subfinder/v2/pkg/subscraping"
 )
 
 // initializePassiveEngine creates the passive engine and loads sources etc

@@ -13,10 +13,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/projectdiscovery/subfinder/v2/pkg/passive"
-	"github.com/projectdiscovery/subfinder/v2/pkg/resolve"
-	"github.com/projectdiscovery/subfinder/v2/pkg/subscraping"
 	mapsutil "github.com/projectdiscovery/utils/maps"
+	"github.com/southax/subfinder/v2/pkg/passive"
+	"github.com/southax/subfinder/v2/pkg/resolve"
+	"github.com/southax/subfinder/v2/pkg/subscraping"
 )
 
 // delayedSource models a source waiting on I/O without using an external service.

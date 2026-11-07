@@ -20,7 +20,7 @@ import (
 	"github.com/tomnomnom/linkheader"
 
 	"github.com/projectdiscovery/gologger"
-	"github.com/projectdiscovery/subfinder/v2/pkg/subscraping"
+	"github.com/southax/subfinder/v2/pkg/subscraping"
 )
 
 type textMatch struct {

@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/projectdiscovery/subfinder/v2/pkg/subscraping"
+	"github.com/southax/subfinder/v2/pkg/subscraping"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

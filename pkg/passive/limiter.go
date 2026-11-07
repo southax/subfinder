@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/projectdiscovery/ratelimit"
-	"github.com/projectdiscovery/subfinder/v2/pkg/subscraping"
+	"github.com/southax/subfinder/v2/pkg/subscraping"
 )
 
 // RateLimiter shares provider budgets across a domain batch. Built-in requests

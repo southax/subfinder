@@ -1,3 +1,82 @@
+> [!NOTE]
+> **This is southax's build of subfinder with [ndxer](https://ndxer.com/) built in.** It is upstream
+> [projectdiscovery/subfinder](https://github.com/projectdiscovery/subfinder) plus two additions, kept current with
+> upstream's `dev` branch. Everything below this section is upstream's README, unchanged.
+
+## What this build adds
+
+**1. An `ndxer` source.** For each domain, it asks ndxer's `/v1/hostnames/` API for every distinct hostname under the
+domain, in a single paged lookup. That includes names that own DNS records and hosts that other records point at, such as CNAME
+and SPF targets, mail and name servers, and SOA primaries. Hosts like `mx1.example.com` or `cdn.example.com` often
+appear in no other source.
+
+**2. Related scope, on by default.** Stock subfinder only maps names under the domain you give it. With an ndxer key, this
+build also asks ndxer which other domains belong to the same owner. These links come from shared evidence, such as
+name servers, mail hosts, SOA contacts, SPF/DMARC/DKIM details, verification tokens and dedicated IPs. The build then
+enumerates those domains with every selected source. `example.com` brings in `example.net`, `example-cdn.com` and
+so on, each with its subdomains.
+
+- Only **subject** domains are added by default: those ndxer proposes as the owner's own. Weaker matches (**review**)
+  are listed in the banner and can be included with `-ndxer-related-classes subject,review`.
+- Signals that belong to shared infrastructure providers are never used to add domains.
+- A banner on stderr lists what was added, what was not and why, the units charged, and a link to inspect the evidence.
+- In JSON output (`-oJ`), hosts from an added domain carry `ndxer_seed` (the domain you asked for) and `ndxer_class`.
+- `-no-ndxer-related` turns it off and gives you stock subfinder behaviour plus the ndxer source.
+
+## Install
+
+```sh
+go install -v github.com/southax/subfinder/v2/cmd/subfinder@ndxer
+```
+
+Use `@ndxer`, not `@latest`: this fork carries upstream's version tags, and `@latest` resolves to one of them.
+
+Or build from source:
+
+```sh
+git clone -b ndxer https://github.com/southax/subfinder && cd subfinder
+go build -o subfinder ./cmd/subfinder
+```
+
+## Configure
+
+Create an API key on your [ndxer account page](https://ndxer.com/). Every plan includes both lookups. Then either:
+
+```sh
+export NDXER_API_KEY=ndx_live_...
+```
+
+or add it to `$HOME/.config/subfinder/provider-config.yaml`:
+
+```yaml
+ndxer:
+  - ndx_live_KEYID_SECRET
+```
+
+Without a key, the ndxer source is skipped and related scope does not run.
+
+## Use
+
+```sh
+subfinder -d example.com                         # every source + ndxer + related scope
+subfinder -d example.com -s ndxer                # ndxer only, still with related scope
+subfinder -d example.com -no-ndxer-related       # stock subfinder scope, plus the ndxer source
+subfinder -d example.com -ndxer-related-classes subject,review -oJ -o out.jsonl
+```
+
+**Units:** each page of `/v1/hostnames/` costs 1 unit. The related lookup costs a few units per input domain, and the
+banner states the exact charge. If the first page shows that listing a domain would cost more units than your account
+has left this month, the source keeps that page and stops with an error that states both numbers. `-max-results` caps
+the hosts per source.
+
+## Upstream
+
+The branches `feat/add-ndxer-source` and `feat/ndxer-related-scope` carry the same changes against upstream's module path,
+for contribution to [projectdiscovery/subfinder](https://github.com/projectdiscovery/subfinder). This build is not
+affiliated with or endorsed by ProjectDiscovery. subfinder is MIT-licensed; see [LICENSE.md](LICENSE.md).
+
+---
+
 <h1 align="center">
   <img src="static/subfinder-logo.png" alt="subfinder" width="200px">
   <br>

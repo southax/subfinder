@@ -13,14 +13,14 @@ import (
 	"github.com/projectdiscovery/chaos-client/pkg/chaos"
 	"github.com/projectdiscovery/goflags"
 	"github.com/projectdiscovery/gologger"
-	"github.com/projectdiscovery/subfinder/v2/pkg/passive"
-	"github.com/projectdiscovery/subfinder/v2/pkg/resolve"
-	"github.com/projectdiscovery/subfinder/v2/pkg/subscraping"
 	envutil "github.com/projectdiscovery/utils/env"
 	fileutil "github.com/projectdiscovery/utils/file"
 	folderutil "github.com/projectdiscovery/utils/folder"
 	logutil "github.com/projectdiscovery/utils/log"
 	updateutils "github.com/projectdiscovery/utils/update"
+	"github.com/southax/subfinder/v2/pkg/passive"
+	"github.com/southax/subfinder/v2/pkg/resolve"
+	"github.com/southax/subfinder/v2/pkg/subscraping"
 )
 
 var (

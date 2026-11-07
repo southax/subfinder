@@ -10,7 +10,7 @@ import (
 
 	mapsutil "github.com/projectdiscovery/utils/maps"
 
-	"github.com/projectdiscovery/subfinder/v2/pkg/subscraping"
+	"github.com/southax/subfinder/v2/pkg/subscraping"
 )
 
 func newCustomRateLimit(counts map[string]uint, durations map[string]time.Duration) *subscraping.CustomRateLimit {

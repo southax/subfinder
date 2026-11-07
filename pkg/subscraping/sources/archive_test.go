@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/projectdiscovery/subfinder/v2/pkg/subscraping"
-	"github.com/projectdiscovery/subfinder/v2/pkg/subscraping/sources/commoncrawl"
-	"github.com/projectdiscovery/subfinder/v2/pkg/subscraping/sources/waybackarchive"
+	"github.com/southax/subfinder/v2/pkg/subscraping"
+	"github.com/southax/subfinder/v2/pkg/subscraping/sources/commoncrawl"
+	"github.com/southax/subfinder/v2/pkg/subscraping/sources/waybackarchive"
 )
 
 // Exercise the real source parsers with an in-memory transport. No archive

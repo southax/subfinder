@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/projectdiscovery/subfinder/v2/pkg/subscraping"
+	"github.com/southax/subfinder/v2/pkg/subscraping"
 )
 
 type registeredSource struct {
