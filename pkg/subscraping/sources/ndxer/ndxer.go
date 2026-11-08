@@ -54,6 +54,15 @@ type Source struct {
 	mu      sync.Mutex
 	stats   subscraping.Statistics
 	apiKeys []string
+	retry   *Backoff
+}
+
+// backoff returns the configured retry policy, or the default one.
+func (s *Source) backoff() Backoff {
+	if s.retry != nil {
+		return *s.retry
+	}
+	return DefaultBackoff()
 }
 
 // Run function returns all subdomains found with the service
@@ -108,7 +117,8 @@ func (s *Source) Run(ctx context.Context, domain string, session *subscraping.Se
 			return session.MaxResults == 0 || stats.Results < session.MaxResults
 		}
 
-		err := s.run(ctx, session, domain, headers, &stats, emit)
+		retry := s.backoff() // read once, before the first request; never held across sleeps
+		err := s.run(ctx, session, domain, headers, &stats, emit, &retry)
 		if err == nil || errors.Is(err, errDone) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return
 		}
@@ -123,14 +133,14 @@ func (s *Source) Run(ctx context.Context, domain string, session *subscraping.Se
 var errDone = errors.New("ndxer: done")
 
 // run follows the cursor to the end, passing every host to emit.
-func (s *Source) run(ctx context.Context, session *subscraping.Session, domain string, headers map[string]string, stats *subscraping.Statistics, emit func(string) bool) error {
+func (s *Source) run(ctx context.Context, session *subscraping.Session, domain string, headers map[string]string, stats *subscraping.Statistics, emit func(string) bool, retry *Backoff) error {
 	cursor := ""
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
 
-		response, err := s.fetchPage(ctx, session, domain, cursor, headers, stats)
+		response, err := s.fetchPage(ctx, session, domain, cursor, headers, stats, retry)
 		if err != nil {
 			return err
 		}
@@ -161,9 +171,20 @@ func (s *Source) run(ctx context.Context, session *subscraping.Session, domain s
 	}
 }
 
-// fetchPage requests one page of hosts.
+// fetchPage requests one page of hosts, retrying per the given policy.
 // It returns a nil response and nil error when ndxer has no data (404).
-func (s *Source) fetchPage(ctx context.Context, session *subscraping.Session, domain, cursor string, headers map[string]string, stats *subscraping.Statistics) (*pageResponse, error) {
+func (s *Source) fetchPage(ctx context.Context, session *subscraping.Session, domain, cursor string, headers map[string]string, stats *subscraping.Statistics, retry *Backoff) (*pageResponse, error) {
+	var response *pageResponse
+	err := retry.Retry(ctx, func() error {
+		page, err := s.fetchOnce(ctx, session, domain, cursor, headers, stats)
+		response = page
+		return err
+	})
+	return response, err
+}
+
+// fetchOnce makes a single request for one page of hosts.
+func (s *Source) fetchOnce(ctx context.Context, session *subscraping.Session, domain, cursor string, headers map[string]string, stats *subscraping.Statistics) (*pageResponse, error) {
 	params := url.Values{"q": {domain}}
 	params.Set("limit", strconv.Itoa(pageLimit))
 	if cursor != "" {
@@ -175,7 +196,7 @@ func (s *Source) fetchPage(ctx context.Context, session *subscraping.Session, do
 	defer session.DiscardHTTPResponse(resp)
 	if err != nil {
 		if resp == nil {
-			return nil, err
+			return nil, Retryable(err, "")
 		}
 		if resp.StatusCode == http.StatusNotFound {
 			return nil, nil
@@ -183,14 +204,21 @@ func (s *Source) fetchPage(ctx context.Context, session *subscraping.Session, do
 		// Surface ndxer's error code (e.g. quota_exceeded, rate_limited) and request id.
 		var apiErr errorResponse
 		if jsoniter.NewDecoder(resp.Body).Decode(&apiErr) == nil && apiErr.Error.Code != "" {
-			return nil, fmt.Errorf("%w: %s: %s (request_id=%s)", err, apiErr.Error.Code, apiErr.Error.Message, apiErr.Error.RequestID)
+			reqErr := fmt.Errorf("%w: %s: %s (request_id=%s)", err, apiErr.Error.Code, apiErr.Error.Message, apiErr.Error.RequestID)
+			if RetryableStatus(resp.StatusCode) {
+				return nil, Retryable(reqErr, resp.Header.Get("Retry-After"))
+			}
+			return nil, reqErr
+		}
+		if RetryableStatus(resp.StatusCode) {
+			return nil, Retryable(err, resp.Header.Get("Retry-After"))
 		}
 		return nil, err
 	}
 
 	var response pageResponse
 	if err := jsoniter.NewDecoder(resp.Body).Decode(&response); err != nil {
-		return nil, err
+		return nil, Retryable(fmt.Errorf("ndxer: decode response: %w", err), "")
 	}
 	return &response, nil
 }

@@ -275,14 +275,16 @@ func TestNdxerSource_PageErrorKeepsEarlierHosts(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	source := &Source{}
-	source.AddApiKeys([]string{"test-key"})
+	var sleeps []time.Duration
+	source := newRetryingSource(t, &sleeps)
 	subs, errs := runSource(t, source, newTestSession(t, server, domain, 0), domain)
 
 	require.Len(t, errs, 1)
 	assert.Contains(t, errs[0].Error(), "timeout")
+	assert.Contains(t, errs[0].Error(), "gave up after 5 attempts")
 	assert.Equal(t, []string{"www.hackerone.com"}, subs)
-	assert.Equal(t, 2, source.Statistics().Requests)
+	// One request for the first page, five attempts at the second.
+	assert.Equal(t, 6, source.Statistics().Requests)
 	assert.Equal(t, 1, source.Statistics().Errors)
 }
 
@@ -313,4 +315,146 @@ func TestNdxerSource_ContextCancel(t *testing.T) {
 			t.Fatalf("got subdomain after cancel: %s", r.Value)
 		}
 	}
+}
+
+func newRetryingSource(t *testing.T, sleeps *[]time.Duration) *Source {
+	t.Helper()
+	source := &Source{}
+	source.AddApiKeys([]string{"test-key"})
+	source.retry = &Backoff{
+		MaxAttempts: 5,
+		Base:        time.Second,
+		Sleep: func(_ context.Context, d time.Duration) error {
+			*sleeps = append(*sleeps, d)
+			return nil
+		},
+		Jitter: func() float64 { return 0 },
+	}
+	return source
+}
+
+func TestNdxerSource_Retries429(t *testing.T) {
+	const domain = "hackerone.com"
+	var hits atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		if hits.Load() == 1 {
+			w.Header().Set("Retry-After", "3")
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = fmt.Fprint(w, `{"error":{"code":"rate_limited","message":"slow down","request_id":"r1"}}`)
+			return
+		}
+		_, _ = fmt.Fprint(w, page("", "a.hackerone.com"))
+	}))
+	t.Cleanup(server.Close)
+
+	var sleeps []time.Duration
+	source := newRetryingSource(t, &sleeps)
+	subs, errs := runSource(t, source, newTestSession(t, server, domain, 0), domain)
+
+	assert.Equal(t, []string{"a.hackerone.com"}, subs)
+	assert.Empty(t, errs)
+	assert.Equal(t, []time.Duration{3 * time.Second}, sleeps)
+	assert.Equal(t, int32(2), hits.Load())
+	assert.Equal(t, 2, source.Statistics().Requests)
+	assert.Zero(t, source.Statistics().Errors)
+}
+
+func TestNdxerSource_Retries503(t *testing.T) {
+	const domain = "hackerone.com"
+	var hits atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		if hits.Load() == 1 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = fmt.Fprint(w, `{"error":{"code":"unavailable","message":"busy","request_id":"r2"}}`)
+			return
+		}
+		_, _ = fmt.Fprint(w, page("", "a.hackerone.com"))
+	}))
+	t.Cleanup(server.Close)
+
+	var sleeps []time.Duration
+	source := newRetryingSource(t, &sleeps)
+	subs, errs := runSource(t, source, newTestSession(t, server, domain, 0), domain)
+
+	assert.Equal(t, []string{"a.hackerone.com"}, subs)
+	assert.Empty(t, errs)
+	assert.Equal(t, []time.Duration{500 * time.Millisecond}, sleeps)
+	assert.Equal(t, int32(2), hits.Load())
+	assert.Equal(t, 2, source.Statistics().Requests)
+}
+
+func TestNdxerSource_RetriesTruncatedBody(t *testing.T) {
+	const domain = "hackerone.com"
+	var hits atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		if hits.Load() == 1 {
+			// Promise more bytes than are sent: the server closes the
+			// connection and the client sees an unexpected EOF mid-JSON.
+			w.Header().Set("Content-Length", "500")
+			_, _ = fmt.Fprint(w, `{"meta":{"next_cursor":null},"matches":[{"name":"a.hackerone.com"`)
+			return
+		}
+		_, _ = fmt.Fprint(w, page("", "a.hackerone.com"))
+	}))
+	t.Cleanup(server.Close)
+
+	var sleeps []time.Duration
+	source := newRetryingSource(t, &sleeps)
+	subs, errs := runSource(t, source, newTestSession(t, server, domain, 0), domain)
+
+	assert.Equal(t, []string{"a.hackerone.com"}, subs)
+	assert.Empty(t, errs)
+	assert.Equal(t, int32(2), hits.Load())
+	assert.Equal(t, 2, source.Statistics().Requests)
+}
+
+func TestNdxerSource_401NotRetried(t *testing.T) {
+	const domain = "hackerone.com"
+	var hits atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = fmt.Fprint(w, `{"error":{"code":"unauthorized","message":"bad key","request_id":"r9"}}`)
+	}))
+	t.Cleanup(server.Close)
+
+	var sleeps []time.Duration
+	source := newRetryingSource(t, &sleeps)
+	subs, errs := runSource(t, source, newTestSession(t, server, domain, 0), domain)
+
+	assert.Empty(t, subs)
+	require.Len(t, errs, 1)
+	assert.Contains(t, errs[0].Error(), "unauthorized")
+	assert.Contains(t, errs[0].Error(), "request_id=r9")
+	assert.Empty(t, sleeps)
+	assert.Equal(t, int32(1), hits.Load())
+	assert.Equal(t, 1, source.Statistics().Errors)
+}
+
+func TestNdxerSource_GivesUpAfterMaxAttempts(t *testing.T) {
+	const domain = "hackerone.com"
+	var hits atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = fmt.Fprint(w, `{"error":{"code":"unavailable","message":"busy","request_id":"r5"}}`)
+	}))
+	t.Cleanup(server.Close)
+
+	var sleeps []time.Duration
+	source := newRetryingSource(t, &sleeps)
+	subs, errs := runSource(t, source, newTestSession(t, server, domain, 0), domain)
+
+	assert.Empty(t, subs)
+	require.Len(t, errs, 1)
+	assert.Contains(t, errs[0].Error(), "unavailable")
+	assert.Contains(t, errs[0].Error(), "request_id=r5")
+	assert.Contains(t, errs[0].Error(), "gave up after 5 attempts")
+	assert.Equal(t, int32(5), hits.Load())
+	assert.Len(t, sleeps, 4)
+	assert.Equal(t, 5, source.Statistics().Requests)
+	assert.Equal(t, 1, source.Statistics().Errors)
 }

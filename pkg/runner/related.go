@@ -13,6 +13,8 @@ import (
 	"time"
 
 	jsoniter "github.com/json-iterator/go"
+
+	"github.com/southax/subfinder/v2/pkg/subscraping/sources/ndxer"
 )
 
 const (
@@ -47,13 +49,17 @@ type relatedSettings struct {
 }
 
 type relatedAPIError struct {
-	Status  int
-	Code    string
-	Message string
+	Status    int
+	Code      string
+	Message   string
+	RequestID string
 }
 
 func (e *relatedAPIError) Error() string {
 	if e.Code != "" {
+		if e.RequestID != "" {
+			return fmt.Sprintf("ndxer related lookup failed: %s: %s (HTTP %d, request_id=%s)", e.Code, e.Message, e.Status, e.RequestID)
+		}
 		return fmt.Sprintf("ndxer related lookup failed: %s: %s (HTTP %d)", e.Code, e.Message, e.Status)
 	}
 	return fmt.Sprintf("ndxer related lookup failed: HTTP %d", e.Status)
@@ -62,7 +68,7 @@ func (e *relatedAPIError) Error() string {
 // fatal reports whether the error will repeat for every further seed.
 func (e *relatedAPIError) fatal() bool {
 	switch e.Status {
-	case http.StatusUnauthorized, http.StatusForbidden, http.StatusTooManyRequests, http.StatusPaymentRequired:
+	case http.StatusUnauthorized, http.StatusForbidden, http.StatusPaymentRequired:
 		return true
 	}
 	return false
@@ -102,10 +108,11 @@ type relatedClient struct {
 	baseURL string
 	key     string
 	http    *http.Client
+	retry   ndxer.Backoff
 }
 
 func newRelatedClient(key string, timeout time.Duration) *relatedClient {
-	return &relatedClient{baseURL: relatedURL, key: key, http: &http.Client{Timeout: timeout}}
+	return &relatedClient{baseURL: relatedURL, key: key, http: &http.Client{Timeout: timeout}, retry: ndxer.DefaultBackoff()}
 }
 
 // lookup follows meta.next_cursor to the end. A further page costs one unit,
@@ -164,6 +171,16 @@ func (c *relatedClient) lookup(ctx context.Context, seed string) (*relatedResult
 }
 
 func (c *relatedClient) fetch(ctx context.Context, seed, cursor string) (*relatedPage, error) {
+	var page *relatedPage
+	err := c.retry.Retry(ctx, func() error {
+		p, err := c.fetchOnce(ctx, seed, cursor)
+		page = p
+		return err
+	})
+	return page, err
+}
+
+func (c *relatedClient) fetchOnce(ctx context.Context, seed, cursor string) (*relatedPage, error) {
 	params := url.Values{"q": {seed}}
 	if cursor != "" {
 		params.Set("cursor", cursor)
@@ -178,7 +195,7 @@ func (c *relatedClient) fetch(ctx context.Context, seed, cursor string) (*relate
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return nil, redactKey(err, c.key)
+		return nil, ndxer.Retryable(redactKey(err, c.key), "")
 	}
 	defer func() { _ = resp.Body.Close() }()
 
@@ -187,20 +204,25 @@ func (c *relatedClient) fetch(ctx context.Context, seed, cursor string) (*relate
 		var body errorBody
 		if jsoniter.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&body) == nil {
 			apiErr.Code, apiErr.Message = body.Error.Code, body.Error.Message
+			apiErr.RequestID = body.Error.RequestID
+		}
+		if ndxer.RetryableStatus(resp.StatusCode) {
+			return nil, ndxer.Retryable(apiErr, resp.Header.Get("Retry-After"))
 		}
 		return nil, apiErr
 	}
 	var page relatedPage
 	if err := jsoniter.NewDecoder(resp.Body).Decode(&page); err != nil {
-		return nil, fmt.Errorf("decode ndxer related response: %w", err)
+		return nil, ndxer.Retryable(fmt.Errorf("decode ndxer related response: %w", err), "")
 	}
 	return &page, nil
 }
 
 type errorBody struct {
 	Error struct {
-		Code    string `json:"code"`
-		Message string `json:"message"`
+		Code      string `json:"code"`
+		Message   string `json:"message"`
+		RequestID string `json:"request_id"`
 	} `json:"error"`
 }
 

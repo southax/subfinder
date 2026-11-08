@@ -3,6 +3,7 @@ package runner
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +13,8 @@ import (
 	"time"
 
 	jsoniter "github.com/json-iterator/go"
+
+	"github.com/southax/subfinder/v2/pkg/subscraping/sources/ndxer"
 )
 
 // relatedServer answers /v1/related/ with two pages for the seed "seed.example".
@@ -193,4 +196,121 @@ func (rt rewriteTransport) RoundTrip(req *http.Request) (*http.Response, error) 
 	clone := req.Clone(req.Context())
 	clone.URL = &u
 	return (&http.Transport{}).RoundTrip(clone)
+}
+
+// retryServer answers each hit with the next scripted response; the last one repeats.
+type scripted struct {
+	status     int
+	retryAfter string
+	body       string
+}
+
+func retryServer(t *testing.T, hits *atomic.Int64, script ...scripted) *httptest.Server {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		n := int(hits.Add(1))
+		step := script[min(n, len(script))-1]
+		if step.retryAfter != "" {
+			w.Header().Set("Retry-After", step.retryAfter)
+		}
+		w.WriteHeader(step.status)
+		_, _ = io.WriteString(w, step.body)
+	}))
+	t.Cleanup(server.Close)
+	return server
+}
+
+func retryingClient(server *httptest.Server, sleeps *[]time.Duration) *relatedClient {
+	return &relatedClient{baseURL: server.URL, key: "test-key", http: server.Client(), retry: ndxer.Backoff{
+		MaxAttempts: 5,
+		Base:        time.Second,
+		Sleep: func(_ context.Context, d time.Duration) error {
+			*sleeps = append(*sleeps, d)
+			return nil
+		},
+		Jitter: func() float64 { return 0 },
+	}}
+}
+
+const onePage = `{"meta":{"next_cursor":null,"units_charged":1},"matches":[{"apex":"owned.example","class":"subject"}]}`
+
+func TestRelatedLookupRetries503(t *testing.T) {
+	var hits atomic.Int64
+	server := retryServer(t, &hits,
+		scripted{status: http.StatusServiceUnavailable, body: `{"error":{"code":"unavailable","message":"busy","request_id":"r1"}}`},
+		scripted{status: http.StatusOK, body: onePage})
+	var sleeps []time.Duration
+	result, err := retryingClient(server, &sleeps).lookup(context.Background(), "seed.example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hits.Load() != 2 || len(result.ByClass[classSubject]) != 1 || len(sleeps) != 1 || sleeps[0] != 500*time.Millisecond {
+		t.Errorf("hits=%d by=%v sleeps=%v", hits.Load(), result.ByClass, sleeps)
+	}
+}
+
+func TestRelatedLookupWaitsRetryAfter(t *testing.T) {
+	var hits atomic.Int64
+	server := retryServer(t, &hits,
+		scripted{status: http.StatusTooManyRequests, retryAfter: "2", body: `{"error":{"code":"rate_limited","message":"slow down","request_id":"r2"}}`},
+		scripted{status: http.StatusOK, body: onePage})
+	var sleeps []time.Duration
+	if _, err := retryingClient(server, &sleeps).lookup(context.Background(), "seed.example"); err != nil {
+		t.Fatal(err)
+	}
+	if hits.Load() != 2 || len(sleeps) != 1 || sleeps[0] != 2*time.Second {
+		t.Errorf("hits=%d sleeps=%v", hits.Load(), sleeps)
+	}
+}
+
+func TestRelatedLookupRetriesTruncatedBody(t *testing.T) {
+	var hits atomic.Int64
+	server := retryServer(t, &hits,
+		scripted{status: http.StatusOK, body: `{"meta":{"next_cursor":null},"matches":[{"apex":"owned.ex`},
+		scripted{status: http.StatusOK, body: onePage})
+	var sleeps []time.Duration
+	result, err := retryingClient(server, &sleeps).lookup(context.Background(), "seed.example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hits.Load() != 2 || len(result.ByClass[classSubject]) != 1 {
+		t.Errorf("hits=%d by=%v", hits.Load(), result.ByClass)
+	}
+}
+
+func TestRelatedLookupDoesNotRetry401(t *testing.T) {
+	var hits atomic.Int64
+	server := retryServer(t, &hits,
+		scripted{status: http.StatusUnauthorized, body: `{"error":{"code":"unauthenticated","message":"bad key","request_id":"r3"}}`})
+	var sleeps []time.Duration
+	_, err := retryingClient(server, &sleeps).lookup(context.Background(), "seed.example")
+	var apiErr *relatedAPIError
+	if !errors.As(err, &apiErr) || !apiErr.fatal() {
+		t.Fatalf("err=%v", err)
+	}
+	if hits.Load() != 1 || len(sleeps) != 0 || !strings.Contains(err.Error(), "request_id=r3") {
+		t.Errorf("hits=%d sleeps=%v err=%v", hits.Load(), sleeps, err)
+	}
+}
+
+func TestRelatedLookupGivesUp(t *testing.T) {
+	var hits atomic.Int64
+	server := retryServer(t, &hits,
+		scripted{status: http.StatusServiceUnavailable, body: `{"error":{"code":"unavailable","message":"busy","request_id":"r4"}}`})
+	var sleeps []time.Duration
+	_, err := retryingClient(server, &sleeps).lookup(context.Background(), "seed.example")
+	var apiErr *relatedAPIError
+	if !errors.As(err, &apiErr) || apiErr.fatal() {
+		t.Fatalf("err=%v", err)
+	}
+	if hits.Load() != 5 || len(sleeps) != 4 || !strings.Contains(err.Error(), "gave up after 5 attempts") || !strings.Contains(err.Error(), "unavailable") {
+		t.Errorf("hits=%d sleeps=%v err=%v", hits.Load(), sleeps, err)
+	}
+}
+
+// A rate limit outlasting the retries must not switch related scope off for later seeds.
+func TestRelatedRateLimitIsNotFatal(t *testing.T) {
+	if (&relatedAPIError{Status: http.StatusTooManyRequests, Code: "rate_limited"}).fatal() {
+		t.Error("429 must not be fatal")
+	}
 }
