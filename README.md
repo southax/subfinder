@@ -272,6 +272,9 @@ table shows 0 ndxer errors.
 `-rls` applies to one process. Several subfinder processes on the same key add up, so run one process with a
 domain list (`-dL`) rather than many processes side by side, or split the rate between them.
 
+`-rls ndxer=…` paces the hostnames source only, not the related lookup. The related lookup makes about one call
+per domain you pass (more when its answer runs to several pages) and retries on its own.
+
 **The source retries.** On HTTP 429 it waits the `Retry-After` the API sends; on 502, 503 and 504, and on a
 response cut off before it ends, it retries with exponential backoff and jitter. It makes at most 5 attempts per
 request and never waits more than 60 s at a time. Other errors, such as a bad key or an exhausted allowance, are
@@ -290,9 +293,10 @@ What a run costs:
   domains, and the run cost about 490 units**. That's more than a Free month. On Free, either start with
   `-no-ndxer-related` and turn related scope on for the domains you care about, or move to a larger plan.
 
-**ndxer never spends units on a list it can't finish.** If the first page shows that listing a domain would need
-more units than you have left this month, the source keeps that page and stops with an error that gives both
-numbers. The related lookup stops in the same way and says so in the banner.
+**ndxer stops early rather than spend your allowance on a list it can't finish.** If the first page shows that
+listing a domain would need more units than you have left this month, the source keeps that page (1 unit) and stops
+with an error that gives both numbers. With `-max-results` set it does not stop early, since that flag already
+bounds the spend. The related lookup stops the same way and says so in the banner.
 
 ---
 
@@ -304,6 +308,7 @@ numbers. The related lookup stops in the same way and says so in the banner.
 | `ndxer related lookup failed: unauthenticated: Invalid or revoked API key. (HTTP 401)` | Wrong or revoked key | Create a new key at https://ndxer.com/app/api-keys/ and check it with `/v1/me/`. |
 | `quota_exceeded` in an error, or `kept the first page` | This month's units are used up | Wait for the period to end (the message gives the date), raise your plan, or use `-max-results` / `-no-ndxer-related`. |
 | `rate_limited` / HTTP 429 | Requests per minute above your plan's limit | Add `-rls ndxer=<plan limit>/m` from the table above. |
+| HTTP 503 or 429, or `gave up after 5 attempts` | Requests arrive faster than the API takes them, even after the retries | Lower `-rls ndxer=…` (for example to `3/s` or less) and run one subfinder process per key, with `-dL` for many domains. |
 | Related scope added nothing | ndxer has no subject domains for this owner | The banner still lists review domains. Try `-ndxer-related-classes subject,review`. |
 | `subfinder -ls` doesn't list `ndxer` | You are running an upstream binary | Run `which subfinder`, then reinstall with `@ndxer` ([step 2](#2-install)). |
 
