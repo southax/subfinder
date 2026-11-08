@@ -25,8 +25,7 @@ type jsonSourceResult struct {
 	Input               string `json:"input"`
 	Source              string `json:"source"`
 	WildcardCertificate bool   `json:"wildcard_certificate,omitempty"`
-	NdxerSeed           string `json:"ndxer_seed,omitempty"`
-	NdxerClass          string `json:"ndxer_class,omitempty"`
+	ndxerFields
 }
 
 type jsonSourceIPResult struct {
@@ -35,8 +34,7 @@ type jsonSourceIPResult struct {
 	Input               string `json:"input"`
 	Source              string `json:"source"`
 	WildcardCertificate bool   `json:"wildcard_certificate,omitempty"`
-	NdxerSeed           string `json:"ndxer_seed,omitempty"`
-	NdxerClass          string `json:"ndxer_class,omitempty"`
+	ndxerFields
 }
 
 type jsonSourcesResult struct {
@@ -44,8 +42,7 @@ type jsonSourcesResult struct {
 	Input               string   `json:"input"`
 	Sources             []string `json:"sources"`
 	WildcardCertificate bool     `json:"wildcard_certificate,omitempty"`
-	NdxerSeed           string   `json:"ndxer_seed,omitempty"`
-	NdxerClass          string   `json:"ndxer_class,omitempty"`
+	ndxerFields
 }
 
 // NewOutputWriter creates a new OutputWriter
@@ -83,11 +80,22 @@ func (o *OutputWriter) createFile(filename string, appendToFile bool) (*os.File,
 	return file, nil
 }
 
-func (o *OutputWriter) tagFields() (string, string) {
+// ndxerFields tag a host under a domain ndxer added to the run. They are
+// empty, and so left out, for hosts under a domain the user passed.
+type ndxerFields struct {
+	NdxerSeed  string `json:"ndxer_seed,omitempty"`
+	NdxerClass string `json:"ndxer_class,omitempty"`
+	// NdxerWhy is ndxer's own most decisive reason for the match, verbatim.
+	NdxerWhy string `json:"ndxer_why,omitempty"`
+	// NdxerEvidence lists the values the domain shares with the seed.
+	NdxerEvidence []ndxerEvidence `json:"ndxer_evidence,omitempty"`
+}
+
+func (o *OutputWriter) tagFields() ndxerFields {
 	if o.tag == nil {
-		return "", ""
+		return ndxerFields{}
 	}
-	return o.tag.Seed, o.tag.Class
+	return ndxerFields{NdxerSeed: o.tag.Seed, NdxerClass: o.tag.Class, NdxerWhy: o.tag.Why, NdxerEvidence: o.tag.Evidence}
 }
 
 // WriteHostIP writes the output list of subdomain to an io.Writer
@@ -134,7 +142,7 @@ func writeJSONHostIP(o *OutputWriter, input string, results map[string]resolve.R
 		data.Host = result.Host
 		data.IP = result.IP
 		data.Input = input
-		data.NdxerSeed, data.NdxerClass = o.tagFields()
+		data.ndxerFields = o.tagFields()
 		data.Source = result.Source
 		data.WildcardCertificate = result.WildcardCertificate
 		err := encoder.Encode(&data)
@@ -193,7 +201,7 @@ func writeJSONHost(o *OutputWriter, input string, results map[string]resolve.Hos
 	for _, result := range results {
 		data.Host = result.Host
 		data.Input = input
-		data.NdxerSeed, data.NdxerClass = o.tagFields()
+		data.ndxerFields = o.tagFields()
 		data.Source = result.Source
 		data.WildcardCertificate = result.WildcardCertificate
 		err := encoder.Encode(data)
@@ -223,7 +231,7 @@ func writeSourceJSONHost(o *OutputWriter, input string, sourceMap map[string]map
 	for host, sources := range sourceMap {
 		data.Host = host
 		data.Input = input
-		data.NdxerSeed, data.NdxerClass = o.tagFields()
+		data.ndxerFields = o.tagFields()
 		keys := make([]string, 0, len(sources))
 		for source := range sources {
 			keys = append(keys, source)

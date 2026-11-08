@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"slices"
+	"sort"
 	"strings"
 	"time"
 
@@ -26,8 +27,6 @@ const (
 
 	// relatedMaxPages bounds paging for one seed, whatever the allowance says.
 	relatedMaxPages = 200
-	// bannerListMax is how many added domains a banner names before it counts the rest.
-	bannerListMax = 40
 )
 
 // relatedBannerWriter receives the per-seed banner and related-scope notices.
@@ -38,8 +37,10 @@ var relatedBannerWriter io.Writer = os.Stderr
 // relatedTag marks a domain that was added to the run because ndxer links it
 // to a seed the user passed.
 type relatedTag struct {
-	Seed  string
-	Class string
+	Seed     string
+	Class    string
+	Why      string
+	Evidence []ndxerEvidence
 }
 
 // relatedSettings is what an enabled expansion needs; nil on a Runner means off.
@@ -87,21 +88,80 @@ type relatedPage struct {
 		} `json:"signals"`
 	} `json:"seed"`
 	Matches []struct {
-		Apex  string `json:"apex"`
-		Class string `json:"class"`
+		Apex     string        `json:"apex"`
+		Class    string        `json:"class"`
+		Evidence []apiEvidence `json:"evidence"`
+		Reasons  []struct {
+			Code string `json:"code"`
+			Text string `json:"text"`
+		} `json:"reasons"`
 	} `json:"matches"`
+}
+
+// apiEvidence is one evidence row of a /v1/related/ match.
+type apiEvidence struct {
+	Kind         string  `json:"kind"`
+	Key          string  `json:"key"`
+	NApexes      int     `json:"n_apexes"`
+	ProviderName *string `json:"provider_name"`
+}
+
+// ndxerEvidence is one value a related domain shares with the seed, as -oJ writes it.
+type ndxerEvidence struct {
+	Kind     string `json:"kind"`
+	Key      string `json:"key"`
+	N        int    `json:"n"`
+	Provider string `json:"provider,omitempty"` // from provider_name when set
+}
+
+// matchEvidence converts a match's evidence in API order, leaving out entries
+// whose kind is "name_label" unless that is the only kind present (then all
+// entries are kept).
+func matchEvidence(evidence []apiEvidence) []ndxerEvidence {
+	if len(evidence) == 0 {
+		return nil
+	}
+	allNameLabel := true
+	for _, e := range evidence {
+		if e.Kind != "name_label" {
+			allNameLabel = false
+			break
+		}
+	}
+	var out []ndxerEvidence
+	for _, e := range evidence {
+		if e.Kind == "name_label" && !allNameLabel {
+			continue
+		}
+		ev := ndxerEvidence{Kind: e.Kind, Key: e.Key, N: e.NApexes}
+		if e.ProviderName != nil {
+			ev.Provider = *e.ProviderName
+		}
+		out = append(out, ev)
+	}
+	return out
 }
 
 // relatedResult is everything one seed's lookup produced.
 type relatedResult struct {
 	// ByClass lists the matched domains per proposed class, in API order.
 	ByClass map[string][]string
+	// Why maps the normalised domain to the API's most decisive reason text.
+	Why map[string]string
+	// Evidence maps the normalised domain to the values it shares with the seed.
+	Evidence map[string][]ndxerEvidence
 	// InfrastructureSignals counts seed signals that are a provider's.
 	InfrastructureSignals int
 	Units                 int
 	Pages                 int
 	// Stopped is set when paging ended early; it says why.
 	Stopped string
+}
+
+// normaliseDomain matches the normalisation expand() applies: lower-case,
+// trimmed, trailing dot removed.
+func normaliseDomain(s string) string {
+	return strings.TrimSuffix(strings.ToLower(strings.TrimSpace(s)), ".")
 }
 
 type relatedClient struct {
@@ -118,7 +178,11 @@ func newRelatedClient(key string, timeout time.Duration) *relatedClient {
 // lookup follows meta.next_cursor to the end. A further page costs one unit,
 // so it stops, keeping what it has, when the allowance cannot cover the rest.
 func (c *relatedClient) lookup(ctx context.Context, seed string) (*relatedResult, error) {
-	result := &relatedResult{ByClass: map[string][]string{}}
+	result := &relatedResult{
+		ByClass:  map[string][]string{},
+		Why:      map[string]string{},
+		Evidence: map[string][]ndxerEvidence{},
+	}
 	cursor := ""
 	for {
 		if err := ctx.Err(); err != nil {
@@ -145,6 +209,14 @@ func (c *relatedClient) lookup(ctx context.Context, seed string) (*relatedResult
 		for _, match := range page.Matches {
 			class := strings.ToLower(match.Class)
 			result.ByClass[class] = append(result.ByClass[class], match.Apex)
+
+			domain := normaliseDomain(match.Apex)
+			if _, exists := result.Evidence[domain]; !exists {
+				result.Evidence[domain] = matchEvidence(match.Evidence)
+				if len(match.Reasons) > 0 {
+					result.Why[domain] = match.Reasons[0].Text
+				}
+			}
 		}
 
 		next := page.Meta.NextCursor
@@ -305,7 +377,12 @@ func (rel *related) expand(ctx context.Context, seed string) []relatedJob {
 				continue
 			}
 			rel.seen[domain] = struct{}{}
-			jobs = append(jobs, relatedJob{domain: domain, tag: &relatedTag{Seed: seed, Class: class}})
+			jobs = append(jobs, relatedJob{domain: domain, tag: &relatedTag{
+				Seed:     seed,
+				Class:    class,
+				Why:      result.Why[domain],
+				Evidence: result.Evidence[domain],
+			}})
 			added[class]++
 			addedNames = append(addedNames, domain)
 		}
@@ -317,6 +394,78 @@ func (rel *related) expand(ctx context.Context, seed string) []relatedJob {
 func bannerf(format string, args ...any) {
 	_, _ = fmt.Fprintf(relatedBannerWriter, "\n"+format+"\n\n", args...)
 }
+
+// evidenceGroup is one set of added domains sharing the same evidence values.
+type evidenceGroup struct {
+	Values  []ndxerEvidence
+	Domains []string
+}
+
+// groupByEvidence groups addedNames by the evidence they share. The group key
+// is the domain's evidence sorted by (kind, key) and joined as "kind\x00key\x01...".
+// Domains keep the order of names. Groups are ordered by len(Domains)
+// descending; ties keep first-appearance order (sort.SliceStable).
+func groupByEvidence(names []string, evidence map[string][]ndxerEvidence) []evidenceGroup {
+	groups := make(map[string]*evidenceGroup)
+	var order []string // first-appearance order of group keys
+
+	for _, name := range names {
+		ev := evidence[name]
+		sorted := make([]ndxerEvidence, len(ev))
+		copy(sorted, ev)
+		sort.Slice(sorted, func(i, j int) bool {
+			if sorted[i].Kind != sorted[j].Kind {
+				return sorted[i].Kind < sorted[j].Kind
+			}
+			return sorted[i].Key < sorted[j].Key
+		})
+		var sb strings.Builder
+		for i, v := range sorted {
+			if i > 0 {
+				sb.WriteRune('\x01')
+			}
+			sb.WriteString(v.Kind)
+			sb.WriteRune('\x00')
+			sb.WriteString(v.Key)
+		}
+		key := sb.String()
+		if g, ok := groups[key]; ok {
+			g.Domains = append(g.Domains, name)
+		} else {
+			groups[key] = &evidenceGroup{Values: sorted, Domains: []string{name}}
+			order = append(order, key)
+		}
+	}
+
+	out := make([]evidenceGroup, 0, len(order))
+	for _, k := range order {
+		out = append(out, *groups[k])
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		return len(out[i].Domains) > len(out[j].Domains)
+	})
+	return out
+}
+
+// formatEvidenceValues renders the shared values as "kind key + kind key".
+// Keys longer than 60 runes are truncated with a trailing ellipsis.
+func formatEvidenceValues(values []ndxerEvidence) string {
+	if len(values) == 0 {
+		return "no listed values"
+	}
+	parts := make([]string, len(values))
+	for i, v := range values {
+		key := v.Key
+		if len([]rune(key)) > 60 {
+			key = string([]rune(key)[:60]) + "…"
+		}
+		parts[i] = v.Kind + " " + key
+	}
+	return strings.Join(parts, " + ")
+}
+
+// bannerGroupMax is how many evidence groups a banner shows before counting the rest.
+const bannerGroupMax = 15
 
 func printRelatedBanner(seed string, classes []string, result *relatedResult, added map[string]int, addedNames []string) {
 	var sb strings.Builder
@@ -335,15 +484,42 @@ func printRelatedBanner(seed string, classes []string, result *relatedResult, ad
 			}
 		}
 		fmt.Fprintf(&sb, "  Added %d domains ndxer links to the same owner (%s), enumerated with all selected sources:\n", total, strings.Join(parts, ", "))
-		shown := addedNames
-		if len(shown) > bannerListMax {
-			shown = shown[:bannerListMax]
+
+		groups := groupByEvidence(addedNames, result.Evidence)
+
+		// Compute digit width of the largest group size.
+		maxSize := 0
+		for _, g := range groups {
+			if len(g.Domains) > maxSize {
+				maxSize = len(g.Domains)
+			}
 		}
-		fmt.Fprintf(&sb, "    %s", strings.Join(shown, " "))
-		if len(addedNames) > len(shown) {
-			fmt.Fprintf(&sb, " ... and %d more", len(addedNames)-len(shown))
+		width := len(fmt.Sprintf("%d", maxSize))
+
+		shownGroups := groups
+		if len(shownGroups) > bannerGroupMax {
+			shownGroups = shownGroups[:bannerGroupMax]
 		}
-		sb.WriteString("\n")
+		for _, g := range shownGroups {
+			values := formatEvidenceValues(g.Values)
+			fmt.Fprintf(&sb, "    %*d share %s\n", width, len(g.Domains), values)
+			domains := g.Domains
+			if len(domains) > 6 {
+				domains = domains[:6]
+			}
+			fmt.Fprintf(&sb, "    %s%s", strings.Repeat(" ", width+1), strings.Join(domains, " "))
+			if len(g.Domains) > 6 {
+				fmt.Fprintf(&sb, " … and %d more", len(g.Domains)-6)
+			}
+			sb.WriteString("\n")
+		}
+		if len(groups) > bannerGroupMax {
+			remainingDomains := 0
+			for _, g := range groups[bannerGroupMax:] {
+				remainingDomains += len(g.Domains)
+			}
+			fmt.Fprintf(&sb, "    … and %d more domains in %d other groups\n", remainingDomains, len(groups)-bannerGroupMax)
+		}
 	}
 
 	if !slices.Contains(classes, classReview) {

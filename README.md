@@ -133,11 +133,16 @@ placeholders.
 ```text
 ==============================================================================
 ndxer related scope for example.com
-  Added 3 domains ndxer links to the same owner (3 subject), enumerated with all selected sources:
-    example.net example-cdn.com example-status.com
+  Added 9 domains ndxer links to the same owner (9 subject), enumerated with all selected sources:
+    6 share mx_host mx1.example-mail.com + verify_token example-site-verification=Q2xhdWRlIGV4YW1wbGUgdG9rZW4
+      example.net example.org example-cdn.com example-status.com example-shop.com example-labs.com
+    2 share verify_token example-site-verification=Q2xhdWRlIGV4YW1wbGUgdG9rZW4
+      example-careers.com example-events.com
+    1 share mx_host mx1.example-mail.com + mx_set 0F3A9C2B7D41E865
+      example-ventures.com
   NOT added: 12 review domains (weaker evidence of the same owner). Include them with: -ndxer-related-classes subject,review
   NOT added: 4 shared signals belong to infrastructure providers, not to the subject; never added.
-  ndxer source: about 1 unit per page for each added domain (3 domains), charged on top of the units below.
+  ndxer source: about 1 unit per page for each added domain (9 domains), charged on top of the units below.
   Units charged by the related lookup: 5 (1 page)
   Turn off: -no-ndxer-related
   Inspect the evidence:
@@ -151,6 +156,7 @@ How to read it:
 | Line | Meaning |
 |---|---|
 | **Added … (subject)** | Domains ndxer proposes as the owner's own. They are enumerated with **every source you selected**, not only ndxer, so their hostnames show up in your output. |
+| **N share …** | The added domains grouped by the values they share with your domain (largest group first), with up to 6 examples per group. Long values are cut at 60 characters. `-oJ` gives every domain's full values. |
 | **NOT added: review** | Weaker evidence of the same owner. They are counted here but not enumerated. Add them with `-ndxer-related-classes subject,review`. |
 | **NOT added: shared signals** | Values that belong to infrastructure providers, such as a hosting company's name servers. They are never used to add domains. |
 | **Units** | What the related lookup cost, and a reminder that each added domain also costs at least one ndxer source lookup. |
@@ -162,16 +168,23 @@ hostnames for pipes.
 
 ### JSON output tells you where each host came from
 
-With `-oJ`, hosts under an added domain carry two extra fields:
+With `-oJ`, hosts under an added domain carry four extra fields:
 
 ```json
-{"host":"api.example.net","input":"example.net","source":"ndxer","ndxer_seed":"example.com","ndxer_class":"subject"}
+{"host":"api.example.net","input":"example.net","source":"ndxer","ndxer_seed":"example.com","ndxer_class":"subject","ndxer_why":"Shares the verification token example-site-verification=Q2xhdWRlIGV4YW1wbGUgdG9rZW4, issued to one account.","ndxer_evidence":[{"kind":"mx_host","key":"mx1.example-mail.com","n":7},{"kind":"verify_token","key":"example-site-verification=Q2xhdWRlIGV4YW1wbGUgdG9rZW4","n":9}]}
 ```
 
 - `ndxer_seed`: the domain you asked for, which led to this host.
-- `ndxer_class`: why its domain was added (`subject` or `review`).
+- `ndxer_class`: the class its domain was added as (`subject` or `review`).
+- `ndxer_why`: ndxer's most decisive reason for the match, in ndxer's own words, exactly as the
+  [related API](https://ndxer.com/docs/) returns it. Left out when ndxer gives no reason.
+- `ndxer_evidence`: the values the domain shares with `ndxer_seed`. `kind` is the type of value, `key` the value
+  itself, and `n` how many domains share it. `provider` is added when the value belongs to a named provider.
+  Shared first labels (`name_label`) are listed only when they are the only evidence.
 
-Hosts under the domain you typed have neither field.
+With `-cs`, the `sources` array and these fields appear together.
+
+Hosts under the domain you typed have none of these fields.
 
 ---
 
