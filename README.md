@@ -289,6 +289,9 @@ What a run costs:
   scope adds. A domain with 2,000 hosts takes 80 pages on Free (25 hosts a page) but only 2 on Team (1,000 a page).
 - **The related lookup:** once per domain you pass, 1 unit plus 1 per shared value scored on the first page (at
   most 8 units), then 1 unit for each further page. The banner prints the exact charge.
+- **A domain ndxer is still looking up costs nothing extra to wait for.** For a domain it has not seen before, ndxer
+  may answer "still looking it up" for a short while. Both lookups ask again until the answer is ready, for up to
+  2 minutes per domain. Those repeats cost no units, though `-stats` counts each one as a request.
 - **Large organisations add many domains.** In one real run, a well-known company's domain brought in **480 subject
   domains, and the run cost about 490 units**. That's more than a Free month. On Free, either start with
   `-no-ndxer-related` and turn related scope on for the domains you care about, or move to a larger plan.
@@ -309,6 +312,7 @@ bounds the spend. The related lookup stops the same way and says so in the banne
 | `quota_exceeded` in an error, or `kept the first page` | This month's units are used up | Wait for the period to end (the message gives the date), raise your plan, or use `-max-results` / `-no-ndxer-related`. |
 | `rate_limited` / HTTP 429 | Requests per minute above your plan's limit | Add `-rls ndxer=<plan limit>/m` from the table above. |
 | HTTP 503 or 429, or `gave up after 5 attempts` | Requests arrive faster than the API takes them, even after the retries | Lower `-rls ndxer=…` (for example to `3/s` or less) and run one subfinder process per key, with `-dL` for many domains. |
+| `ndxer is still looking up example.com; run again shortly` | ndxer had not seen the domain before and was still looking it up after 2 minutes | Run the same command again in a few minutes. Waiting costs no units. |
 | Related scope added nothing | ndxer has no subject domains for this owner | The banner still lists review domains. Try `-ndxer-related-classes subject,review`. |
 | `subfinder -ls` doesn't list `ndxer` | You are running an upstream binary | Run `which subfinder`, then reinstall with `@ndxer` ([step 2](#2-install)). |
 

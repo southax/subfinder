@@ -184,11 +184,12 @@ func (c *relatedClient) lookup(ctx context.Context, seed string) (*relatedResult
 		Evidence: map[string][]ndxerEvidence{},
 	}
 	cursor := ""
+	var pendingWaited time.Duration
 	for {
 		if err := ctx.Err(); err != nil {
 			return result, err
 		}
-		page, err := c.fetch(ctx, seed, cursor)
+		page, err := c.fetch(ctx, seed, cursor, &pendingWaited)
 		if err != nil {
 			var apiErr *relatedAPIError
 			if result.Pages > 0 && errors.As(err, &apiErr) && apiErr.Code == "quota_exceeded" {
@@ -242,9 +243,9 @@ func (c *relatedClient) lookup(ctx context.Context, seed string) (*relatedResult
 	}
 }
 
-func (c *relatedClient) fetch(ctx context.Context, seed, cursor string) (*relatedPage, error) {
+func (c *relatedClient) fetch(ctx context.Context, seed, cursor string, pendingWaited *time.Duration) (*relatedPage, error) {
 	var page *relatedPage
-	err := c.retry.Retry(ctx, func() error {
+	err := c.retry.Await(ctx, seed, pendingWaited, func() error {
 		p, err := c.fetchOnce(ctx, seed, cursor)
 		page = p
 		return err
@@ -271,6 +272,9 @@ func (c *relatedClient) fetchOnce(ctx context.Context, seed, cursor string) (*re
 	}
 	defer func() { _ = resp.Body.Close() }()
 
+	if resp.StatusCode == http.StatusAccepted {
+		return nil, &ndxer.PendingError{RetryAfter: resp.Header.Get("Retry-After")}
+	}
 	if resp.StatusCode != http.StatusOK {
 		apiErr := &relatedAPIError{Status: resp.StatusCode}
 		var body errorBody

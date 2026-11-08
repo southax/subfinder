@@ -86,6 +86,23 @@ func Retryable(err error, retryAfter string) error {
 	return &retryableError{err: err, retryAfter: retryAfter}
 }
 
+// parseRetryAfter interprets a Retry-After header value: a positive number
+// of seconds, or an HTTP date in the future. ok is false for anything else.
+func parseRetryAfter(v string) (time.Duration, bool) {
+	if v == "" {
+		return 0, false
+	}
+	if secs, err := strconv.Atoi(v); err == nil && secs > 0 {
+		return time.Duration(secs) * time.Second, true
+	}
+	if ts, err := http.ParseTime(v); err == nil {
+		if wait := time.Until(ts); wait > 0 {
+			return wait, true
+		}
+	}
+	return 0, false
+}
+
 // Delay is the wait to perform after the attempt numbered attempt (1-based)
 // failed. A Retry-After header naming a positive number of seconds, or an
 // HTTP date in the future, wins; otherwise the step is Base doubled
@@ -105,15 +122,8 @@ func (b Backoff) Delay(attempt int, retryAfter string) time.Duration {
 		jitter = rand.Float64
 	}
 
-	if retryAfter != "" {
-		if secs, err := strconv.Atoi(retryAfter); err == nil && secs > 0 {
-			return min(time.Duration(secs)*time.Second, maxWait)
-		}
-		if ts, err := http.ParseTime(retryAfter); err == nil {
-			if wait := time.Until(ts); wait > 0 {
-				return min(wait, maxWait)
-			}
-		}
+	if d, ok := parseRetryAfter(retryAfter); ok {
+		return min(d, maxWait)
 	}
 
 	// Double Base per failed attempt; past about 30 doublings, or once the
@@ -158,5 +168,69 @@ func (b Backoff) Retry(ctx context.Context, try func() error) error {
 		if err := sleep(ctx, b.Delay(attempt, retryable.retryAfter)); err != nil {
 			return err
 		}
+	}
+}
+
+// PendingWait is the longest a client waits, per domain, for ndxer to finish
+// looking up a domain it has not seen before (HTTP 202).
+const PendingWait = 120 * time.Second
+
+// pendingDefaultWait is the wait between polls when a 202 has no usable Retry-After.
+const pendingDefaultWait = 5 * time.Second
+
+// pendingMaxWait caps one wait between polls.
+const pendingMaxWait = 30 * time.Second
+
+// PendingError is what one attempt returns when ndxer answered 202: the
+// lookup is still running. RetryAfter is the response's header value.
+type PendingError struct{ RetryAfter string }
+
+func (e *PendingError) Error() string { return "ndxer: lookup still pending" }
+
+// PendingDelay is the wait before polling again: Retry-After when usable,
+// else pendingDefaultWait, capped at pendingMaxWait.
+func PendingDelay(retryAfter string) time.Duration {
+	d, ok := parseRetryAfter(retryAfter)
+	if !ok {
+		d = pendingDefaultWait
+	}
+	return min(d, pendingMaxWait)
+}
+
+// Await runs b.Retry(ctx, try) and, while its result is a *PendingError
+// (errors.As), waits and runs b.Retry again. Each b.Retry call has its own
+// MaxAttempts budget, so polls of a pending lookup never use up the error
+// retries. *waited is the pending wait already spent for this domain (callers
+// share it across a domain's pages); when it has reached PendingWait and the
+// answer is still pending, Await returns
+// fmt.Errorf("ndxer is still looking up %s; run again shortly", subject).
+// Otherwise it sleeps d = min(PendingDelay(pe.RetryAfter), PendingWait-*waited)
+// via b.Sleep (nil means SleepContext), returns the sleep's error if any
+// (context cancelled), adds d to *waited, and loops. If waited is nil, use a
+// local counter. Any non-pending result (nil or error) is returned unchanged.
+func (b Backoff) Await(ctx context.Context, subject string, waited *time.Duration, try func() error) error {
+	if waited == nil {
+		local := time.Duration(0)
+		waited = &local
+	}
+	sleep := b.Sleep
+	if sleep == nil {
+		sleep = SleepContext
+	}
+	for {
+		err := b.Retry(ctx, try)
+		var pe *PendingError
+		if err == nil || !errors.As(err, &pe) {
+			return err
+		}
+		remaining := PendingWait - *waited
+		if remaining <= 0 {
+			return fmt.Errorf("ndxer is still looking up %s; run again shortly", subject)
+		}
+		d := min(PendingDelay(pe.RetryAfter), remaining)
+		if err := sleep(ctx, d); err != nil {
+			return err
+		}
+		*waited += d
 	}
 }

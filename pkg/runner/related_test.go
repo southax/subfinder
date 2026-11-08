@@ -329,6 +329,49 @@ func TestRelatedLookupGivesUp(t *testing.T) {
 	}
 }
 
+func TestRelatedLookupPendingThenDone(t *testing.T) {
+	var hits atomic.Int64
+	server := retryServer(t, &hits,
+		scripted{status: http.StatusAccepted, retryAfter: "4", body: `{"meta":{"status":"pending","next_cursor":null},"matches":[]}`},
+		scripted{status: http.StatusOK, body: onePage})
+	var sleeps []time.Duration
+	result, err := retryingClient(server, &sleeps).lookup(context.Background(), "seed.example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hits.Load() != 2 || len(result.ByClass[classSubject]) != 1 || len(sleeps) != 1 || sleeps[0] != 4*time.Second {
+		t.Errorf("hits=%d by=%v sleeps=%v", hits.Load(), result.ByClass, sleeps)
+	}
+}
+
+func TestRelatedLookupPendingGivesUp(t *testing.T) {
+	var hits atomic.Int64
+	server := retryServer(t, &hits,
+		scripted{status: http.StatusAccepted, body: `{"meta":{"status":"pending","next_cursor":null},"matches":[]}`})
+	var sleeps []time.Duration
+	result, err := retryingClient(server, &sleeps).lookup(context.Background(), "seed.example")
+	if err == nil || !strings.Contains(err.Error(), "ndxer is still looking up seed.example; run again shortly") {
+		t.Fatalf("err=%v", err)
+	}
+	if hits.Load() != 25 || len(result.ByClass) != 0 {
+		t.Errorf("hits=%d by=%v", hits.Load(), result.ByClass)
+	}
+}
+
+func TestRelatedLookupPendingRetryAfterCapped(t *testing.T) {
+	var hits atomic.Int64
+	server := retryServer(t, &hits,
+		scripted{status: http.StatusAccepted, retryAfter: "600", body: `{"meta":{"status":"pending","next_cursor":null},"matches":[]}`},
+		scripted{status: http.StatusOK, body: onePage})
+	var sleeps []time.Duration
+	if _, err := retryingClient(server, &sleeps).lookup(context.Background(), "seed.example"); err != nil {
+		t.Fatal(err)
+	}
+	if hits.Load() != 2 || len(sleeps) != 1 || sleeps[0] != 30*time.Second {
+		t.Errorf("hits=%d sleeps=%v", hits.Load(), sleeps)
+	}
+}
+
 // A rate limit outlasting the retries must not switch related scope off for later seeds.
 func TestRelatedRateLimitIsNotFatal(t *testing.T) {
 	if (&relatedAPIError{Status: http.StatusTooManyRequests, Code: "rate_limited"}).fatal() {

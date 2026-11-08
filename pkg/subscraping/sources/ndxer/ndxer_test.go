@@ -458,3 +458,120 @@ func TestNdxerSource_GivesUpAfterMaxAttempts(t *testing.T) {
 	assert.Equal(t, 5, source.Statistics().Requests)
 	assert.Equal(t, 1, source.Statistics().Errors)
 }
+
+func TestNdxerSource_PendingThenDone(t *testing.T) {
+	const domain = "hackerone.com"
+	var hits atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		if hits.Load() == 1 {
+			w.Header().Set("Retry-After", "3")
+			w.WriteHeader(http.StatusAccepted)
+			_, _ = fmt.Fprint(w, `{"meta":{"status":"pending","next_cursor":null},"matches":[]}`)
+			return
+		}
+		_, _ = fmt.Fprint(w, page("", "a.hackerone.com"))
+	}))
+	t.Cleanup(server.Close)
+
+	var sleeps []time.Duration
+	source := newRetryingSource(t, &sleeps)
+	subs, errs := runSource(t, source, newTestSession(t, server, domain, 0), domain)
+
+	assert.Equal(t, []string{"a.hackerone.com"}, subs)
+	assert.Empty(t, errs)
+	assert.Equal(t, []time.Duration{3 * time.Second}, sleeps)
+	assert.Equal(t, int32(2), hits.Load())
+	assert.Equal(t, 2, source.Statistics().Requests)
+	assert.Zero(t, source.Statistics().Errors)
+}
+
+func TestNdxerSource_PendingGivesUp(t *testing.T) {
+	const domain = "hackerone.com"
+	var hits atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = fmt.Fprint(w, `{"meta":{"status":"pending","next_cursor":null},"matches":[]}`)
+	}))
+	t.Cleanup(server.Close)
+
+	var sleeps []time.Duration
+	source := newRetryingSource(t, &sleeps)
+	subs, errs := runSource(t, source, newTestSession(t, server, domain, 0), domain)
+
+	assert.Empty(t, subs)
+	require.Len(t, errs, 1)
+	assert.Contains(t, errs[0].Error(), "ndxer is still looking up hackerone.com; run again shortly")
+	assert.Equal(t, int32(25), hits.Load())
+	assert.Len(t, sleeps, 24)
+	assert.Equal(t, 25, source.Statistics().Requests)
+	assert.Equal(t, 1, source.Statistics().Errors)
+}
+
+func TestNdxerSource_PendingRetryAfterCapped(t *testing.T) {
+	const domain = "hackerone.com"
+	var hits atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		if hits.Load() == 1 {
+			w.Header().Set("Retry-After", "600")
+			w.WriteHeader(http.StatusAccepted)
+			_, _ = fmt.Fprint(w, `{"meta":{"status":"pending","next_cursor":null},"matches":[]}`)
+			return
+		}
+		_, _ = fmt.Fprint(w, page("", "a.hackerone.com"))
+	}))
+	t.Cleanup(server.Close)
+
+	var sleeps []time.Duration
+	source := newRetryingSource(t, &sleeps)
+	subs, errs := runSource(t, source, newTestSession(t, server, domain, 0), domain)
+
+	assert.Equal(t, []string{"a.hackerone.com"}, subs)
+	assert.Empty(t, errs)
+	assert.Equal(t, []time.Duration{30 * time.Second}, sleeps)
+	assert.Equal(t, int32(2), hits.Load())
+	assert.Equal(t, 2, source.Statistics().Requests)
+}
+
+func TestNdxerSource_PendingDoesNotUseErrorRetries(t *testing.T) {
+	const domain = "hackerone.com"
+	var hits atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		switch hits.Load() {
+		case 2, 4, 6:
+			w.Header().Set("Retry-After", "1")
+			w.WriteHeader(http.StatusAccepted)
+			_, _ = fmt.Fprint(w, `{"meta":{"status":"pending","next_cursor":null},"matches":[]}`)
+			return
+		case 1, 3, 5:
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = fmt.Fprint(w, `{"error":{"code":"unavailable","message":"busy","request_id":"r7"}}`)
+			return
+		}
+		_, _ = fmt.Fprint(w, page("", "a.hackerone.com"))
+	}))
+	t.Cleanup(server.Close)
+
+	var sleeps []time.Duration
+	source := &Source{}
+	source.AddApiKeys([]string{"test-key"})
+	source.retry = &Backoff{
+		MaxAttempts: 2,
+		Base:        time.Second,
+		Sleep: func(_ context.Context, d time.Duration) error {
+			sleeps = append(sleeps, d)
+			return nil
+		},
+		Jitter: func() float64 { return 0 },
+	}
+	subs, errs := runSource(t, source, newTestSession(t, server, domain, 0), domain)
+
+	assert.Equal(t, []string{"a.hackerone.com"}, subs)
+	assert.Empty(t, errs)
+	assert.Equal(t, int32(7), hits.Load())
+	assert.Equal(t, 7, source.Statistics().Requests)
+	assert.Zero(t, source.Statistics().Errors)
+}

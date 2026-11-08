@@ -134,13 +134,14 @@ var errDone = errors.New("ndxer: done")
 
 // run follows the cursor to the end, passing every host to emit.
 func (s *Source) run(ctx context.Context, session *subscraping.Session, domain string, headers map[string]string, stats *subscraping.Statistics, emit func(string) bool, retry *Backoff) error {
+	var pendingWaited time.Duration
 	cursor := ""
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
 
-		response, err := s.fetchPage(ctx, session, domain, cursor, headers, stats, retry)
+		response, err := s.fetchPage(ctx, session, domain, cursor, headers, stats, retry, &pendingWaited)
 		if err != nil {
 			return err
 		}
@@ -173,9 +174,9 @@ func (s *Source) run(ctx context.Context, session *subscraping.Session, domain s
 
 // fetchPage requests one page of hosts, retrying per the given policy.
 // It returns a nil response and nil error when ndxer has no data (404).
-func (s *Source) fetchPage(ctx context.Context, session *subscraping.Session, domain, cursor string, headers map[string]string, stats *subscraping.Statistics, retry *Backoff) (*pageResponse, error) {
+func (s *Source) fetchPage(ctx context.Context, session *subscraping.Session, domain, cursor string, headers map[string]string, stats *subscraping.Statistics, retry *Backoff, pendingWaited *time.Duration) (*pageResponse, error) {
 	var response *pageResponse
-	err := retry.Retry(ctx, func() error {
+	err := retry.Await(ctx, domain, pendingWaited, func() error {
 		page, err := s.fetchOnce(ctx, session, domain, cursor, headers, stats)
 		response = page
 		return err
@@ -197,6 +198,10 @@ func (s *Source) fetchOnce(ctx context.Context, session *subscraping.Session, do
 	if err != nil {
 		if resp == nil {
 			return nil, Retryable(err, "")
+		}
+		if resp.StatusCode == http.StatusAccepted {
+			// ndxer has not seen this domain yet and is still looking it up.
+			return nil, &PendingError{RetryAfter: resp.Header.Get("Retry-After")}
 		}
 		if resp.StatusCode == http.StatusNotFound {
 			return nil, nil
