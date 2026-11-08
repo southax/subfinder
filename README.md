@@ -247,8 +247,23 @@ includes both lookups this build uses.
 |---|--:|--:|--:|---|
 | Free | 250 | 25 | 10 | `-rls ndxer=10/m` |
 | Developer | 10,000 | 250 | 60 | `-rls ndxer=60/m` |
-| Team | 100,000 | 1,000 | 300 | `-rls ndxer=300/m` |
-| Business | 1,000,000 | 1,000 | 1,000 | none needed |
+| Team | 100,000 | 1,000 | 300 | `-rls ndxer=3/s` |
+| Business | 1,000,000 | 1,000 | 1,000 | `-rls ndxer=3/s` |
+
+Set `-rls` on every plan, Business included. Without it, subfinder sends ndxer requests as fast as it can, and
+bursts well under the per-minute limit can still be answered with HTTP 503. One subfinder process at
+`-rls ndxer=3/s` ran 200 organisations without a single ndxer error; four processes on one key with no `-rls`
+(about 40 requests in flight) got fast 503s. On Business you can raise the rate step by step while the `-stats`
+table shows 0 ndxer errors.
+
+`-rls` applies to one process. Several subfinder processes on the same key add up, so run one process with a
+domain list (`-dL`) rather than many processes side by side, or split the rate between them.
+
+**The source retries.** On HTTP 429 it waits the `Retry-After` the API sends; on 502, 503 and 504, and on a
+response cut off before it ends, it retries with exponential backoff and jitter. It makes at most 5 attempts per
+request and never waits more than 60 s at a time. Other errors, such as a bad key or an exhausted allowance, are
+not retried. The related lookup retries the same way. Retries help with short bursts; they are not a substitute
+for `-rls`.
 
 Current plans and prices are at https://ndxer.com/pricing/. `GET /v1/me/` (free) shows how many units you have left.
 
