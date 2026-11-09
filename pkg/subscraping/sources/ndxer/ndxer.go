@@ -49,7 +49,7 @@ type errorResponse struct {
 	} `json:"error"`
 }
 
-// Source is the passive scraping agent
+// Source is the ndxer source: every hostname ndxer has observed under a domain.
 type Source struct {
 	mu      sync.Mutex
 	stats   subscraping.Statistics

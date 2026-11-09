@@ -359,9 +359,9 @@ func (rel *related) expand(ctx context.Context, seed string) []relatedJob {
 		var apiErr *relatedAPIError
 		if errors.As(err, &apiErr) && apiErr.fatal() {
 			rel.off = true
-			bannerf("ndxer related scope: %s. Related-scope expansion is off for the rest of this run; the domains you passed are still enumerated. Turn it off explicitly with -no-ndxer-related.", err)
+			bannerf("ndxer related scope: %s. Related-scope expansion is off for the rest of this run; the names under the domains you passed are still listed. Turn it off explicitly with -no-ndxer-related.", err)
 		} else if ctx.Err() == nil {
-			bannerf("ndxer related scope for %s: %s. Only the domain you passed is enumerated for this seed.", seed, err)
+			bannerf("ndxer related scope for %s: %s. Only the names under the domain you passed are listed for this seed.", seed, err)
 		}
 		if result == nil || len(result.ByClass) == 0 {
 			return nil
@@ -487,7 +487,7 @@ func printRelatedBanner(seed string, classes []string, result *relatedResult, ad
 				parts = append(parts, fmt.Sprintf("%d %s", added[class], class))
 			}
 		}
-		fmt.Fprintf(&sb, "  Added %d domains ndxer links to the same owner (%s), enumerated with all selected sources:\n", total, strings.Join(parts, ", "))
+		fmt.Fprintf(&sb, "  Added %d domains ndxer links to the same owner (%s), listed with all selected sources:\n", total, strings.Join(parts, ", "))
 
 		groups := groupByEvidence(addedNames, result.Evidence)
 

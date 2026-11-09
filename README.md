@@ -1,7 +1,7 @@
 <h1 align="center">subfinder + ndxer</h1>
 
 <p align="center">
-<b>Every hostname ndxer's DNS database holds under a domain, plus the other domains that belong to the same owner.</b><br>
+<b>Give subfinder one domain: get the names under it, the other domains ndxer links to the same owner, and the names under those.</b><br>
 <a href="#quick-start">Quick start</a> •
 <a href="#what-you-get">What you get</a> •
 <a href="#recipes">Recipes</a> •
@@ -11,18 +11,18 @@
 </p>
 
 This is [subfinder](https://github.com/projectdiscovery/subfinder) with [ndxer](https://ndxer.com/) built in. ndxer
-is a DNS database you query over an API. Give this build a domain and an ndxer API key, and it does two things stock
-subfinder can't:
+reads DNS both ways: from a domain to its names, and from a value back to every domain that publishes it. Give this
+build a domain and an ndxer API key, and it does two things subfinder on its own can't:
 
-1. **The `ndxer` source** lists every hostname ndxer holds under the domain. That covers names with DNS records of
+1. **The `ndxer` source** lists every hostname ndxer has observed under the domain. That covers names with DNS records of
    their own, and also hosts that other records point at: CNAME targets, mail servers, name servers, SPF includes
    and SOA primaries. Names such as `mx1.example.com` or `ns2.example.com` often appear in no other source.
-2. **Related scope.** Stock subfinder only returns names under the domain you type. With an ndxer key, this build
-   first asks ndxer which other domains belong to the same owner, such as `example.net` or `example-cdn.com`, and
-   enumerates those as well. This is **on by default**. Every run prints a banner that says what was added and why,
+2. **Related scope.** subfinder on its own only returns names under the domain you type. With an ndxer key, this build
+   first asks ndxer which other domains it links to the same owner, such as `example.net` or `example.org`, and
+   lists the names under those as well. This is **on by default**. Every run prints a banner that says what was added and why,
    what was left out, and what it cost.
 
-Everything else works the same as upstream subfinder: every other source, every flag, the output formats. The ndxer
+Everything else works the same as the original subfinder: every other source, every flag, the output formats. The ndxer
 source and related scope run alongside the rest.
 
 ---
@@ -54,11 +54,11 @@ You need **Go 1.26 or newer** (`go version`).
 go install -v github.com/southax/subfinder/v2/cmd/subfinder@ndxer
 ```
 
-- Use **`@ndxer`, not `@latest`.** This fork carries upstream's version tags, so `@latest` installs a plain upstream
+- Use **`@ndxer`, not `@latest`.** This fork carries subfinder's own version tags, so `@latest` installs a plain subfinder
   release with no ndxer in it.
-- The binary is called `subfinder` and lands in `$(go env GOPATH)/bin`. It **replaces** any upstream subfinder
+- The binary is called `subfinder` and lands in `$(go env GOPATH)/bin`. It **replaces** any other subfinder
   installed there.
-- **Don't run `subfinder -up`.** The self-updater downloads upstream's release and removes ndxer. To update this
+- **Don't run `subfinder -up`.** The self-updater downloads the plain subfinder release and removes ndxer. To update this
   build, run the `go install` line again.
 
 Or build from source:
@@ -133,16 +133,14 @@ placeholders.
 ```text
 ==============================================================================
 ndxer related scope for example.com
-  Added 9 domains ndxer links to the same owner (9 subject), enumerated with all selected sources:
-    6 share mx_host mx1.example-mail.com + verify_token example-site-verification=Q2xhdWRlIGV4YW1wbGUgdG9rZW4
-      example.net example.org example-cdn.com example-status.com example-shop.com example-labs.com
-    2 share verify_token example-site-verification=Q2xhdWRlIGV4YW1wbGUgdG9rZW4
-      example-careers.com example-events.com
-    1 share mx_host mx1.example-mail.com + mx_set 0F3A9C2B7D41E865
-      example-ventures.com
+  Added 2 domains ndxer links to the same owner (2 subject), listed with all selected sources:
+    1 share mx_host mx1.example.com + verify_token example-site-verification=Q2xhdWRlIGV4YW1wbGUgdG9rZW4
+      example.net
+    1 share verify_token example-site-verification=Q2xhdWRlIGV4YW1wbGUgdG9rZW4
+      example.org
   NOT added: 12 review domains (weaker evidence of the same owner). Include them with: -ndxer-related-classes subject,review
   NOT added: 4 shared signals belong to infrastructure providers, not to the subject; never added.
-  ndxer source: about 1 unit per page for each added domain (9 domains), charged on top of the units below.
+  ndxer source: about 1 unit per page for each added domain (2 domains), charged on top of the units below.
   Units charged by the related lookup: 5 (1 page)
   Turn off: -no-ndxer-related
   Inspect the evidence:
@@ -155,14 +153,14 @@ How to read it:
 
 | Line | Meaning |
 |---|---|
-| **Added … (subject)** | Domains ndxer proposes as the owner's own. They are enumerated with **every source you selected**, not only ndxer, so their hostnames show up in your output. |
+| **Added … (subject)** | Domains ndxer proposes as the owner's own. Their names are listed with **every source you selected**, not only ndxer, so their hostnames show up in your output. |
 | **N share …** | The added domains grouped by the values they share with your domain (largest group first), with up to 6 examples per group. Long values are cut at 60 characters. `-oJ` gives every domain's full values. |
-| **NOT added: review** | Weaker evidence of the same owner. They are counted here but not enumerated. Add them with `-ndxer-related-classes subject,review`. |
+| **NOT added: review** | Weaker evidence of the same owner. They are counted here but not listed. Add them with `-ndxer-related-classes subject,review`. |
 | **NOT added: shared signals** | Values that belong to infrastructure providers, such as a hosting company's name servers. They are never used to add domains. |
 | **Units** | What the related lookup cost, and a reminder that each added domain also costs at least one ndxer source lookup. |
 | **Inspect the evidence** | The same answer as raw JSON, or in ndxer's investigation page, with the shared values behind every match. |
 
-A **subject** class is a proposal, not proof of ownership. Before you treat an added domain as in scope for a test,
+A **subject** class is a proposal made from evidence. Before you treat an added domain as in scope for a test,
 open the evidence link. **The banner always goes to stderr**, even with `-silent`, so `stdout` stays a clean list of
 hostnames for pipes.
 
@@ -171,7 +169,7 @@ hostnames for pipes.
 With `-oJ`, hosts under an added domain carry four extra fields:
 
 ```json
-{"host":"api.example.net","input":"example.net","source":"ndxer","ndxer_seed":"example.com","ndxer_class":"subject","ndxer_why":"Shares the verification token example-site-verification=Q2xhdWRlIGV4YW1wbGUgdG9rZW4, issued to one account.","ndxer_evidence":[{"kind":"mx_host","key":"mx1.example-mail.com","n":7},{"kind":"verify_token","key":"example-site-verification=Q2xhdWRlIGV4YW1wbGUgdG9rZW4","n":9}]}
+{"host":"api.example.net","input":"example.net","source":"ndxer","ndxer_seed":"example.com","ndxer_class":"subject","ndxer_why":"Shares the verification token example-site-verification=Q2xhdWRlIGV4YW1wbGUgdG9rZW4, issued to one account.","ndxer_evidence":[{"kind":"mx_host","key":"mx1.example.com","n":7},{"kind":"verify_token","key":"example-site-verification=Q2xhdWRlIGV4YW1wbGUgdG9rZW4","n":9}]}
 ```
 
 - `ndxer_seed`: the domain you asked for, which led to this host.
@@ -232,7 +230,7 @@ These flags are added by this build:
 | `-ndxer-related-classes` | `subject` | Which related domains to add: `subject`, or `subject,review` for the widest scope. `infrastructure` is refused, because those domains belong to a provider. |
 | `-no-ndxer-related` | off | Turns related scope off. You get stock subfinder scope, with the ndxer source still running. |
 
-These upstream flags matter most when you use ndxer:
+These subfinder flags matter most when you use ndxer:
 
 | Flag | Use with ndxer |
 |---|---|
@@ -244,10 +242,10 @@ These upstream flags matter most when you use ndxer:
 | `-oJ`, `-cs` | JSON lines output, and which source found each host. |
 | `-stats` | Per-source table at the end. The quickest way to see that ndxer ran with no errors. |
 | `-silent` | Hostnames only on stdout. The banner still goes to stderr. |
-| `-duc` | Skip the update check. That check compares against upstream releases, not this build. |
+| `-duc` | Skip the update check. That check compares against the plain subfinder releases, not this build. |
 
-Everything else is upstream's: run `subfinder -h`, or read
-[upstream's README](https://github.com/projectdiscovery/subfinder#usage).
+Everything else is subfinder's own: run `subfinder -h`, or read
+[subfinder's README](https://github.com/projectdiscovery/subfinder#usage).
 
 ---
 
@@ -256,12 +254,9 @@ Everything else is upstream's: run `subfinder -h`, or read
 Every ndxer request costs units from your monthly allowance. Plans differ in volume, not features: every plan
 includes both lookups this build uses.
 
-| Plan | Units / month | Hosts per page | Requests / minute | Suggested `-rls` |
-|---|--:|--:|--:|---|
-| Free | 250 | 25 | 10 | `-rls ndxer=10/m` |
-| Developer | 10,000 | 250 | 60 | `-rls ndxer=60/m` |
-| Team | 100,000 | 1,000 | 300 | `-rls ndxer=3/s` |
-| Business | 1,000,000 | 1,000 | 1,000 | `-rls ndxer=3/s` |
+Each plan's units per month, hosts per page and requests per minute are on the
+[pricing page](https://ndxer.com/pricing/). Set `-rls ndxer=N/m` to your plan's requests per minute, and at most
+`-rls ndxer=3/s` on the larger plans.
 
 Set `-rls` on every plan, Business included. Without it, subfinder sends ndxer requests as fast as it can, and
 bursts well under the per-minute limit can still be answered with HTTP 503. One subfinder process at
@@ -286,14 +281,14 @@ Current plans and prices are at https://ndxer.com/pricing/. `GET /v1/me/` (free)
 What a run costs:
 
 - **The ndxer source:** 1 unit per page, for every domain it runs on: the one you typed and every domain related
-  scope adds. A domain with 2,000 hosts takes 80 pages on Free (25 hosts a page) but only 2 on Team (1,000 a page).
+  scope adds. Larger plans return more hosts per page, so the same domain takes fewer pages and fewer units.
 - **The related lookup:** once per domain you pass, 1 unit plus 1 per shared value scored on the first page (at
   most 8 units), then 1 unit for each further page. The banner prints the exact charge.
 - **A domain ndxer is still looking up costs nothing extra to wait for.** For a domain it has not seen before, ndxer
   may answer "still looking it up" for a short while. Both lookups ask again until the answer is ready, for up to
   2 minutes per domain. Those repeats cost no units, though `-stats` counts each one as a request.
-- **Large organisations add many domains.** In one real run, a well-known company's domain brought in **480 subject
-  domains, and the run cost about 490 units**. That's more than a Free month. On Free, either start with
+- **Large organisations add many domains.** In one real run, one organisation's domain brought in **480 subject
+  domains, and the run cost about 490 units**. That can be more than a small plan's month. On a small plan, either start with
   `-no-ndxer-related` and turn related scope on for the domains you care about, or move to a larger plan.
 
 **ndxer stops early rather than spend your allowance on a list it can't finish.** If the first page shows that
@@ -310,11 +305,11 @@ bounds the spend. The related lookup stops the same way and says so in the banne
 | `The following sources were included but skipped... ndxer` | No key found | Set `NDXER_API_KEY`, or add `ndxer:` to the provider config ([step 3](#3-give-subfinder-the-key)). |
 | `ndxer related lookup failed: unauthenticated: Invalid or revoked API key. (HTTP 401)` | Wrong or revoked key | Create a new key at https://ndxer.com/app/api-keys/ and check it with `/v1/me/`. |
 | `quota_exceeded` in an error, or `kept the first page` | This month's units are used up | Wait for the period to end (the message gives the date), raise your plan, or use `-max-results` / `-no-ndxer-related`. |
-| `rate_limited` / HTTP 429 | Requests per minute above your plan's limit | Add `-rls ndxer=<plan limit>/m` from the table above. |
+| `rate_limited` / HTTP 429 | Requests per minute above your plan's limit | Add `-rls ndxer=<plan limit>/m`, with your plan's requests per minute from the pricing page. |
 | HTTP 503 or 429, or `gave up after 5 attempts` | Requests arrive faster than the API takes them, even after the retries | Lower `-rls ndxer=…` (for example to `3/s` or less) and run one subfinder process per key, with `-dL` for many domains. |
 | `ndxer is still looking up example.com; run again shortly` | ndxer had not seen the domain before and was still looking it up after 2 minutes | Run the same command again in a few minutes. Waiting costs no units. |
 | Related scope added nothing | ndxer has no subject domains for this owner | The banner still lists review domains. Try `-ndxer-related-classes subject,review`. |
-| `subfinder -ls` doesn't list `ndxer` | You are running an upstream binary | Run `which subfinder`, then reinstall with `@ndxer` ([step 2](#2-install)). |
+| `subfinder -ls` doesn't list `ndxer` | You are running a plain subfinder binary | Run `which subfinder`, then reinstall with `@ndxer` ([step 2](#2-install)). |
 
 ndxer's API errors include a `request_id`. Quote it when you contact ndxer support.
 
@@ -325,7 +320,7 @@ To call the API directly, see the [API docs](https://ndxer.com/docs/) and the
 
 ## About this build
 
-- It is kept current with upstream subfinder's `dev` branch.
+- It is kept current with subfinder's `dev` branch.
 - **This build is not affiliated with or endorsed by ProjectDiscovery.** subfinder is their work, MIT-licensed; see
   [LICENSE.md](LICENSE.md). For every other source, its API keys, the full flag list, Docker images and using
-  subfinder as a Go library, see [upstream's README](https://github.com/projectdiscovery/subfinder#readme).
+  subfinder as a Go library, see [subfinder's README](https://github.com/projectdiscovery/subfinder#readme).
