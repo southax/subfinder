@@ -54,8 +54,7 @@ You need **Go 1.26 or newer** (`go version`).
 go install -v github.com/southax/subfinder/v2/cmd/subfinder@ndxer
 ```
 
-- Use **`@ndxer`, not `@latest`.** This fork carries subfinder's own version tags, so `@latest` installs a plain subfinder
-  release with no ndxer in it.
+- Use **`@ndxer`.** The build lives on the `ndxer` branch and this repository publishes no version tags of its own.
 - The binary is called `subfinder` and lands in `$(go env GOPATH)/bin`. It **replaces** any other subfinder
   installed there.
 - **Don't run `subfinder -up`.** The self-updater downloads the plain subfinder release and removes ndxer. To update this
