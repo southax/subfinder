@@ -11,6 +11,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	jsoniter "github.com/json-iterator/go"
@@ -347,6 +348,28 @@ type related struct {
 type relatedJob struct {
 	domain string
 	tag    *relatedTag
+	// done, when set, is released once this domain's enumeration is over.
+	done *sync.WaitGroup
+}
+
+// finish releases done, so related domains may start once every seed is over.
+func (j relatedJob) finish() {
+	if j.done != nil {
+		j.done.Done()
+	}
+}
+
+// waitDone waits for wg, or until ctx ends.
+func waitDone(ctx context.Context, wg *sync.WaitGroup) {
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-ctx.Done():
+	}
 }
 
 // expand returns the domains to add for one seed, and writes the banner.

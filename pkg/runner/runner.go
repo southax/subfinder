@@ -206,6 +206,7 @@ func (r *Runner) EnumerateMultipleDomainsWithCtx(ctx context.Context, reader io.
 			defer wg.Done()
 			for job := range jobs {
 				if ctx.Err() != nil {
+					job.finish()
 					return
 				}
 
@@ -213,7 +214,9 @@ func (r *Runner) EnumerateMultipleDomainsWithCtx(ctx context.Context, reader io.
 				worker.passiveAgent = r.newPassiveAgent()
 				worker.relatedTag = job.tag
 
-				if _, err := worker.EnumerateSingleDomainWithCtx(ctx, job.domain, writers); err != nil {
+				_, err := worker.EnumerateSingleDomainWithCtx(ctx, job.domain, writers)
+				job.finish()
+				if err != nil {
 					fail(err)
 					return
 				}
@@ -307,18 +310,29 @@ func (r *Runner) EnumerateMultipleDomainsWithCtx(ctx context.Context, reader io.
 			expansion.seen[strings.ToLower(domain)] = struct{}{}
 		}
 
-	queueing:
+		// Every domain the user passed is enumerated before any related domain
+		// starts, so related domains never compete with the seeds for the
+		// sources' rate limits. The related lookups run while the seeds do.
+		var seedsDone sync.WaitGroup
+		var pending []relatedJob
 		for _, domain := range inputs {
-			if ctx.Err() != nil || !queue(relatedJob{domain: domain}) {
+			if ctx.Err() != nil {
+				break
+			}
+			seedsDone.Add(1)
+			if !queue(relatedJob{domain: domain, done: &seedsDone}) {
+				seedsDone.Done()
 				break
 			}
 			if ip.MatchString(domain) {
 				continue
 			}
-			for _, job := range expansion.expand(ctx, domain) {
-				if !queue(job) {
-					break queueing
-				}
+			pending = append(pending, expansion.expand(ctx, domain)...)
+		}
+		waitDone(ctx, &seedsDone)
+		for _, job := range pending {
+			if !queue(job) {
+				break
 			}
 		}
 	}
