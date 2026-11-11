@@ -350,10 +350,11 @@ func TestRelatedLookupPendingGivesUp(t *testing.T) {
 		scripted{status: http.StatusAccepted, body: `{"meta":{"status":"pending","next_cursor":null},"matches":[]}`})
 	var sleeps []time.Duration
 	result, err := retryingClient(server, &sleeps).lookup(context.Background(), "seed.example")
-	if err == nil || !strings.Contains(err.Error(), "ndxer is still looking up seed.example; run again shortly") {
+	if err == nil || !strings.Contains(err.Error(), "ndxer was still looking up seed.example after 15 minutes") {
 		t.Fatalf("err=%v", err)
 	}
-	if hits.Load() != 25 || len(result.ByClass) != 0 {
+	// One poll every 5 s for the whole wait, plus the first request.
+	if hits.Load() != int64(ndxer.PendingWait/(5*time.Second))+1 || len(result.ByClass) != 0 {
 		t.Errorf("hits=%d by=%v", hits.Load(), result.ByClass)
 	}
 }
@@ -506,5 +507,45 @@ func TestBannerGroupsAndTruncates(t *testing.T) {
 	}
 	if strings.Contains(text, "d6.example") || strings.Contains(text, "\x1b[") {
 		t.Errorf("banner shows a 7th domain or colour:\n%s", text)
+	}
+}
+
+func TestRelatedLookupPartialWaitsForTheRest(t *testing.T) {
+	var hits atomic.Int64
+	server := retryServer(t, &hits,
+		scripted{status: http.StatusOK, retryAfter: "4", body: `{"meta":{"status":"partial","next_cursor":null,"units_charged":1},"matches":[]}`},
+		scripted{status: http.StatusOK, body: onePage})
+	var sleeps []time.Duration
+	var banner strings.Builder
+	old := relatedBannerWriter
+	relatedBannerWriter = &banner
+	t.Cleanup(func() { relatedBannerWriter = old })
+
+	result, err := retryingClient(server, &sleeps).lookup(context.Background(), "seed.example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Partial || hits.Load() != 2 || len(result.ByClass[classSubject]) != 1 || len(sleeps) != 1 {
+		t.Errorf("partial=%v hits=%d by=%v sleeps=%v", result.Partial, hits.Load(), result.ByClass, sleeps)
+	}
+	if !strings.Contains(banner.String(), "ndxer is still adding related domains for seed.example") {
+		t.Errorf("banner = %q", banner.String())
+	}
+}
+
+func TestRelatedLookupPartialWithNoWait(t *testing.T) {
+	var hits atomic.Int64
+	server := retryServer(t, &hits,
+		scripted{status: http.StatusOK, retryAfter: "4", body: `{"meta":{"status":"partial","next_cursor":null,"units_charged":1},"matches":[{"apex":"owned.example","class":"subject"}]}`})
+	var sleeps []time.Duration
+	client := retryingClient(server, &sleeps)
+	client.retry.NoWait = true
+
+	result, err := client.lookup(context.Background(), "seed.example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Partial || result.PartialCapped || hits.Load() != 1 || len(result.ByClass[classSubject]) != 1 || len(sleeps) != 0 {
+		t.Errorf("partial=%v capped=%v hits=%d by=%v sleeps=%v", result.Partial, result.PartialCapped, hits.Load(), result.ByClass, sleeps)
 	}
 }

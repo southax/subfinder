@@ -51,6 +51,7 @@ type Options struct {
 	Domain              goflags.StringSlice // Domain is the domain to find subdomains for
 	NdxerRelatedClasses goflags.StringSlice // NdxerRelatedClasses is the classes of related domains ndxer adds to the run (subject, review)
 	NoNdxerRelated      bool                // NoNdxerRelated turns off related-scope expansion
+	NdxerNoWait         bool                // NdxerNoWait takes partial ndxer lists as they are instead of waiting
 	DomainsFile         string              // DomainsFile is the file containing list of domains to find subdomains for
 	Output              io.Writer
 	OutputFile          string               // Output is the file to write found subdomains to.
@@ -107,6 +108,7 @@ func ParseOptions() *Options {
 		flagSet.BoolVar(&options.All, "all", false, "use all sources for enumeration (slow)"),
 		flagSet.StringSliceVar(&options.NdxerRelatedClasses, "ndxer-related-classes", []string{"subject"}, "classes of related domains ndxer adds to the run (subject, review); with an ndxer key every input domain is expanded to the domains ndxer links to the same owner", goflags.NormalizedStringSliceOptions),
 		flagSet.BoolVar(&options.NoNdxerRelated, "no-ndxer-related", false, "do not add the related domains ndxer links to the same owner"),
+		flagSet.BoolVar(&options.NdxerNoWait, "ndxer-no-wait", false, "use ndxer's lists as they are when ndxer is still adding to them, instead of waiting up to 15 minutes for the complete ones"),
 		flagSet.StringSliceVarP(&options.ExcludeSources, "exclude-sources", "es", nil, "sources to exclude from enumeration (-es alienvault,zoomeyeapi)", goflags.NormalizedStringSliceOptions),
 	)
 

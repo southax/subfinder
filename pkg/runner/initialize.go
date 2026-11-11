@@ -10,6 +10,7 @@ import (
 	"github.com/southax/subfinder/v2/pkg/passive"
 	"github.com/southax/subfinder/v2/pkg/resolve"
 	"github.com/southax/subfinder/v2/pkg/subscraping"
+	"github.com/southax/subfinder/v2/pkg/subscraping/sources/ndxer"
 )
 
 // initializePassiveEngine creates the passive engine and loads sources etc
@@ -42,6 +43,7 @@ func (r *Runner) initializePassiveEngine(providerKeys map[string][]string) {
 // initializeRelated enables related-scope expansion when an ndxer key is
 // configured (provider config or NDXER_API_KEY) and it was not turned off.
 func (r *Runner) initializeRelated() error {
+	ndxer.SetNoWait(r.options.NdxerNoWait)
 	classes, err := parseRelatedClasses(r.options.NdxerRelatedClasses)
 	if err != nil {
 		return err

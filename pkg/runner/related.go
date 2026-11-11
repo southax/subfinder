@@ -78,6 +78,8 @@ func (e *relatedAPIError) fatal() bool {
 
 type relatedPage struct {
 	Meta struct {
+		// Status is "partial" on a first page that is valid but not complete yet.
+		Status          string  `json:"status"`
 		NextCursor      *string `json:"next_cursor"`
 		UnitsCharged    int     `json:"units_charged"`
 		UnitsToComplete *int    `json:"units_to_complete"`
@@ -157,6 +159,10 @@ type relatedResult struct {
 	Pages                 int
 	// Stopped is set when paging ended early; it says why.
 	Stopped string
+	// Partial is set when the list was read while ndxer was still adding to
+	// it; PartialCapped when that was after the whole wait.
+	Partial       bool
+	PartialCapped bool
 }
 
 // normaliseDomain matches the normalisation expand() applies: lower-case,
@@ -191,6 +197,11 @@ func (c *relatedClient) lookup(ctx context.Context, seed string) (*relatedResult
 			return result, err
 		}
 		page, err := c.fetch(ctx, seed, cursor, &pendingWaited)
+		var partialErr *ndxer.PartialError
+		if errors.As(err, &partialErr) && page != nil {
+			result.Partial, result.PartialCapped = true, partialErr.Capped
+			err = nil
+		}
 		if err != nil {
 			var apiErr *relatedAPIError
 			if result.Pages > 0 && errors.As(err, &apiErr) && apiErr.Code == "quota_exceeded" {
@@ -246,7 +257,12 @@ func (c *relatedClient) lookup(ctx context.Context, seed string) (*relatedResult
 
 func (c *relatedClient) fetch(ctx context.Context, seed, cursor string, pendingWaited *time.Duration) (*relatedPage, error) {
 	var page *relatedPage
-	err := c.retry.Await(ctx, seed, pendingWaited, func() error {
+	retry := c.retry
+	retry.NoWait = retry.NoWait || ndxer.NoWait()
+	retry.Note = func(partial bool) {
+		_, _ = fmt.Fprintln(relatedBannerWriter, ndxer.WaitNotice("related domains", seed, partial))
+	}
+	err := retry.Await(ctx, seed, pendingWaited, func() error {
 		p, err := c.fetchOnce(ctx, seed, cursor)
 		page = p
 		return err
@@ -291,6 +307,9 @@ func (c *relatedClient) fetchOnce(ctx context.Context, seed, cursor string) (*re
 	var page relatedPage
 	if err := jsoniter.NewDecoder(resp.Body).Decode(&page); err != nil {
 		return nil, ndxer.Retryable(fmt.Errorf("decode ndxer related response: %w", err), "")
+	}
+	if page.Meta.Status == ndxer.StatusPartial {
+		return &page, &ndxer.PendingError{RetryAfter: resp.Header.Get("Retry-After"), Partial: true}
 	}
 	return &page, nil
 }
@@ -559,6 +578,9 @@ func printRelatedBanner(seed string, classes []string, result *relatedResult, ad
 	}
 	if result.Stopped != "" {
 		fmt.Fprintf(&sb, "  INCOMPLETE: %s.\n", result.Stopped)
+	}
+	if result.Partial {
+		fmt.Fprintf(&sb, "  PARTIAL: %s\n", ndxer.PartialNotice("related domains", seed, result.PartialCapped, false))
 	}
 	if total > 0 {
 		fmt.Fprintf(&sb, "  ndxer source: about 1 unit per page for each added domain (%d domains), charged on top of the units below.\n", total)

@@ -150,8 +150,9 @@ func TestAwait_BudgetExhausted(t *testing.T) {
 	err := b.Await(context.Background(), "example.com", &waited, func() error {
 		return &PendingError{}
 	})
-	if err == nil || err.Error() != "ndxer is still looking up example.com; run again shortly" {
-		t.Errorf("Await returned %v, want %q", err, "ndxer is still looking up example.com; run again shortly")
+	want := "ndxer was still looking up example.com after 15 minutes; run again shortly"
+	if err == nil || err.Error() != want {
+		t.Errorf("Await returned %v, want %q", err, want)
 	}
 	if waited != PendingWait {
 		t.Errorf("waited = %v, want %v", waited, PendingWait)
@@ -163,8 +164,9 @@ func TestAwait_BudgetExhausted(t *testing.T) {
 	if sum != PendingWait {
 		t.Errorf("sum of sleeps = %v, want %v", sum, PendingWait)
 	}
-	if len(sleeps) != 24 {
-		t.Errorf("len(sleeps) = %d, want 24", len(sleeps))
+	// One poll every pendingDefaultWait (5 s) for the whole PendingWait.
+	if n := int(PendingWait / pendingDefaultWait); len(sleeps) != n {
+		t.Errorf("len(sleeps) = %d, want %d", len(sleeps), n)
 	}
 }
 

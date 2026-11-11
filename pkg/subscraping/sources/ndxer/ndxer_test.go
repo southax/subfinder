@@ -502,10 +502,11 @@ func TestNdxerSource_PendingGivesUp(t *testing.T) {
 
 	assert.Empty(t, subs)
 	require.Len(t, errs, 1)
-	assert.Contains(t, errs[0].Error(), "ndxer is still looking up hackerone.com; run again shortly")
-	assert.Equal(t, int32(25), hits.Load())
-	assert.Len(t, sleeps, 24)
-	assert.Equal(t, 25, source.Statistics().Requests)
+	assert.Contains(t, errs[0].Error(), "ndxer was still looking up hackerone.com after 15 minutes")
+	polls := int(PendingWait / pendingDefaultWait) // one every 5 s for the whole wait
+	assert.Equal(t, int32(polls+1), hits.Load())
+	assert.Len(t, sleeps, polls)
+	assert.Equal(t, polls+1, source.Statistics().Requests)
 	assert.Equal(t, 1, source.Statistics().Errors)
 }
 

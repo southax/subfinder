@@ -5,12 +5,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"slices"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	jsoniter "github.com/json-iterator/go"
@@ -28,8 +31,49 @@ const (
 	pageLimit = 1000
 )
 
+// noWait is -ndxer-no-wait: take a partial list as it is, never wait.
+var noWait atomic.Bool
+
+// SetNoWait sets -ndxer-no-wait for every ndxer lookup in this process.
+func SetNoWait(v bool) { noWait.Store(v) }
+
+// NoWait reports whether -ndxer-no-wait is set.
+func NoWait() bool { return noWait.Load() }
+
+// Notices receives the lines that say ndxer is waiting or that a list is
+// partial. It is os.Stderr and never gologger, whose only level that
+// survives -silent writes to stdout and would pollute pipes.
+var Notices io.Writer = os.Stderr
+
+func noticef(format string, args ...any) {
+	_, _ = fmt.Fprintf(Notices, format+"\n", args...)
+}
+
+// WaitNotice is the line printed once when a lookup starts to wait.
+func WaitNotice(list, subject string, partial bool) string {
+	minutes := int(PendingWait.Minutes())
+	if partial {
+		return fmt.Sprintf("ndxer is still adding %s for %s. Waiting up to %d minutes for the complete list; add -ndxer-no-wait to use what is there now instead.", list, subject, minutes)
+	}
+	return fmt.Sprintf("ndxer has not looked at %s before and is looking it up now. Waiting up to %d minutes for the answer; add -ndxer-no-wait to skip the wait.", subject, minutes)
+}
+
+// PartialNotice is the warning for a list used while ndxer was still adding to it.
+// cut says the run's own time limit ended the wait.
+func PartialNotice(list, subject string, capped, cut bool) string {
+	if cut {
+		return fmt.Sprintf("ndxer %s for %s were still partial when the run's time limit was reached; the run has what was there. Run subfinder again later to get the rest, or raise -max-time.", list, subject)
+	}
+	if capped {
+		return fmt.Sprintf("ndxer %s for %s are still partial after waiting %d minutes; the run has what was there. Run subfinder again later to get the rest.", list, subject, int(PendingWait.Minutes()))
+	}
+	return fmt.Sprintf("ndxer %s for %s are partial: ndxer was still adding to them, and -ndxer-no-wait is set, so this run did not wait. Run subfinder again in a few minutes to get the rest, or drop -ndxer-no-wait to wait for them.", list, subject)
+}
+
 type pageResponse struct {
 	Meta struct {
+		// Status is "partial" on a first page that is valid but not complete yet.
+		Status     string  `json:"status"`
 		NextCursor *string `json:"next_cursor"`
 		// UnitsToComplete is what the pages after this one cost;
 		// UnitsRemaining is this month's allowance left after this page.
@@ -59,10 +103,12 @@ type Source struct {
 
 // backoff returns the configured retry policy, or the default one.
 func (s *Source) backoff() Backoff {
+	b := DefaultBackoff()
 	if s.retry != nil {
-		return *s.retry
+		b = *s.retry
 	}
-	return DefaultBackoff()
+	b.NoWait = b.NoWait || NoWait()
+	return b
 }
 
 // Run function returns all subdomains found with the service
@@ -118,7 +164,14 @@ func (s *Source) Run(ctx context.Context, domain string, session *subscraping.Se
 		}
 
 		retry := s.backoff() // read once, before the first request; never held across sleeps
-		err := s.run(ctx, session, domain, headers, &stats, emit, &retry)
+		retry.Note = func(partial bool) { noticef("%s", WaitNotice("hostnames", domain, partial)) }
+		partial := &partialState{}
+		err := s.run(ctx, session, domain, headers, &stats, emit, &retry, partial)
+		if partial.seen && (partial.final || err != nil) {
+			// Still partial when the run ended: what was there has been emitted.
+			cut := errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
+			noticef("%s", PartialNotice("hostnames", domain, !retry.NoWait, cut))
+		}
 		if err == nil || errors.Is(err, errDone) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return
 		}
@@ -132,8 +185,14 @@ func (s *Source) Run(ctx context.Context, domain string, session *subscraping.Se
 // errDone ends a lookup early without reporting an error.
 var errDone = errors.New("ndxer: done")
 
-// run follows the cursor to the end, passing every host to emit.
-func (s *Source) run(ctx context.Context, session *subscraping.Session, domain string, headers map[string]string, stats *subscraping.Statistics, emit func(string) bool, retry *Backoff) error {
+// partialState records whether a lookup saw a partial page (seen) and ended
+// with one (final), so the run can say the list is partial.
+type partialState struct{ seen, final bool }
+
+// run follows the cursor to the end, passing every host to emit. A partial
+// first page is emitted as soon as it arrives, so a wait cut short by the
+// run's own time limit loses nothing; the complete page adds only new names.
+func (s *Source) run(ctx context.Context, session *subscraping.Session, domain string, headers map[string]string, stats *subscraping.Statistics, emit func(string) bool, retry *Backoff, partial *partialState) error {
 	var pendingWaited time.Duration
 	cursor := ""
 	for {
@@ -141,7 +200,22 @@ func (s *Source) run(ctx context.Context, session *subscraping.Session, domain s
 			return err
 		}
 
-		response, err := s.fetchPage(ctx, session, domain, cursor, headers, stats, retry, &pendingWaited)
+		onPartial := func(page *pageResponse) {
+			partial.seen = true
+			for _, match := range page.Matches {
+				if !emit(match.Name) {
+					return
+				}
+			}
+		}
+		response, err := s.fetchPage(ctx, session, domain, cursor, headers, stats, retry, &pendingWaited, onPartial)
+		var pe *PartialError
+		if errors.As(err, &pe) {
+			partial.final = true
+			err = nil
+		} else if err == nil && partial.seen {
+			partial.seen = false // the complete page arrived
+		}
 		if err != nil {
 			return err
 		}
@@ -174,11 +248,16 @@ func (s *Source) run(ctx context.Context, session *subscraping.Session, domain s
 
 // fetchPage requests one page of hosts, retrying per the given policy.
 // It returns a nil response and nil error when ndxer has no data (404).
-func (s *Source) fetchPage(ctx context.Context, session *subscraping.Session, domain, cursor string, headers map[string]string, stats *subscraping.Statistics, retry *Backoff, pendingWaited *time.Duration) (*pageResponse, error) {
+// onPartial, when set, receives every partial page as it arrives.
+func (s *Source) fetchPage(ctx context.Context, session *subscraping.Session, domain, cursor string, headers map[string]string, stats *subscraping.Statistics, retry *Backoff, pendingWaited *time.Duration, onPartial func(*pageResponse)) (*pageResponse, error) {
 	var response *pageResponse
 	err := retry.Await(ctx, domain, pendingWaited, func() error {
 		page, err := s.fetchOnce(ctx, session, domain, cursor, headers, stats)
 		response = page
+		var pe *PendingError
+		if page != nil && onPartial != nil && errors.As(err, &pe) && pe.Partial {
+			onPartial(page)
+		}
 		return err
 	})
 	return response, err
@@ -224,6 +303,9 @@ func (s *Source) fetchOnce(ctx context.Context, session *subscraping.Session, do
 	var response pageResponse
 	if err := jsoniter.NewDecoder(resp.Body).Decode(&response); err != nil {
 		return nil, Retryable(fmt.Errorf("ndxer: decode response: %w", err), "")
+	}
+	if response.Meta.Status == StatusPartial {
+		return &response, &PendingError{RetryAfter: resp.Header.Get("Retry-After"), Partial: true}
 	}
 	return &response, nil
 }

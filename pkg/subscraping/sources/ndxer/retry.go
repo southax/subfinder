@@ -20,6 +20,12 @@ type Backoff struct {
 	MaxWait     time.Duration                                    // cap on any single wait; 0 means 60s
 	Sleep       func(ctx context.Context, d time.Duration) error // nil means SleepContext; tests replace it
 	Jitter      func() float64                                   // returns [0,1); nil means math/rand/v2 Float64
+	// NoWait takes a partial list as it is instead of waiting for the rest,
+	// and does not wait for a domain ndxer has not looked at before.
+	NoWait bool
+	// Note, when set, is called once per Await before its first wait;
+	// partial says whether it waits for a list still being added to.
+	Note func(partial bool)
 }
 
 // DefaultBackoff is the policy ndxer's API docs ask clients to follow:
@@ -171,9 +177,10 @@ func (b Backoff) Retry(ctx context.Context, try func() error) error {
 	}
 }
 
-// PendingWait is the longest a client waits, per domain, for ndxer to finish
-// looking up a domain it has not seen before (HTTP 202).
-const PendingWait = 120 * time.Second
+// PendingWait is the longest a client waits, per domain, for ndxer to finish:
+// a domain it has not seen before (HTTP 202), or one whose list is still being
+// added to (200 with meta.status "partial").
+const PendingWait = 15 * time.Minute
 
 // pendingDefaultWait is the wait between polls when a 202 has no usable Retry-After.
 const pendingDefaultWait = 5 * time.Second
@@ -181,11 +188,32 @@ const pendingDefaultWait = 5 * time.Second
 // pendingMaxWait caps one wait between polls.
 const pendingMaxWait = 30 * time.Second
 
-// PendingError is what one attempt returns when ndxer answered 202: the
-// lookup is still running. RetryAfter is the response's header value.
-type PendingError struct{ RetryAfter string }
+// PendingError is what one attempt returns when ndxer answered 202 (the lookup
+// is still running), or a 200 whose meta.status is "partial" (Partial is then
+// true and the page was decoded: it is valid, not complete yet). RetryAfter is
+// the response's header value.
+type PendingError struct {
+	RetryAfter string
+	Partial    bool
+}
 
-func (e *PendingError) Error() string { return "ndxer: lookup still pending" }
+func (e *PendingError) Error() string {
+	if e.Partial {
+		return "ndxer: list still being added to"
+	}
+	return "ndxer: lookup still pending"
+}
+
+// PartialError is what Await returns when the last answer was a valid but
+// partial page and it did not wait for the rest: NoWait was set, or the wait
+// ran out (Capped). The caller's last decoded page is usable.
+type PartialError struct{ Capped bool }
+
+func (e *PartialError) Error() string { return "ndxer: partial list" }
+
+// StatusPartial is meta.status on a first page that is valid but not complete
+// yet: more is still being added for the domain.
+const StatusPartial = "partial"
 
 // PendingDelay is the wait before polling again: Retry-After when usable,
 // else pendingDefaultWait, capped at pendingMaxWait.
@@ -224,8 +252,17 @@ func (b Backoff) Await(ctx context.Context, subject string, waited *time.Duratio
 			return err
 		}
 		remaining := PendingWait - *waited
+		if pe.Partial && (b.NoWait || remaining <= 0) {
+			return &PartialError{Capped: !b.NoWait}
+		}
+		if b.NoWait {
+			return fmt.Errorf("ndxer has not looked at %s before and is looking it up now; -ndxer-no-wait is set, so this run did not wait. Run again in a few minutes, or drop -ndxer-no-wait to wait for it", subject)
+		}
 		if remaining <= 0 {
-			return fmt.Errorf("ndxer is still looking up %s; run again shortly", subject)
+			return fmt.Errorf("ndxer was still looking up %s after %d minutes; run again shortly", subject, int(PendingWait.Minutes()))
+		}
+		if *waited == 0 && b.Note != nil {
+			b.Note(pe.Partial)
 		}
 		d := min(PendingDelay(pe.RetryAfter), remaining)
 		if err := sleep(ctx, d); err != nil {

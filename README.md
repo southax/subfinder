@@ -230,6 +230,7 @@ These flags are added by this build:
 |---|---|---|
 | `-ndxer-related-classes` | `subject` | Which related domains to add: `subject`, or `subject,review` for the widest scope. `infrastructure` is refused, because those domains belong to a provider. |
 | `-no-ndxer-related` | off | Turns related scope off. You get stock subfinder scope, with the ndxer source still running. |
+| `-ndxer-no-wait` | off | Uses ndxer's lists as they are when ndxer is still adding to them, instead of waiting for the complete ones. Each list used this way is flagged on stderr. |
 
 These subfinder flags matter most when you use ndxer:
 
@@ -285,9 +286,12 @@ What a run costs:
   scope adds. Larger plans return more hosts per page, so the same domain takes fewer pages and fewer units.
 - **The related lookup:** once per domain you pass, 1 unit plus 1 per shared value scored on the first page (at
   most 8 units), then 1 unit for each further page. The banner prints the exact charge.
-- **A domain ndxer is still looking up costs nothing extra to wait for.** For a domain it has not seen before, ndxer
-  may answer "still looking it up" for a short while. Both lookups ask again until the answer is ready, for up to
-  2 minutes per domain. Those repeats cost no units, though `-stats` counts each one as a request.
+- **Waiting for a complete list costs nothing extra.** For a domain it has not seen before, ndxer may answer "still
+  looking it up" for a short while; for a domain it already holds, it answers at once and may say the list is partial
+  because more is still being added. In both cases this build waits for the complete list by default, for up to 15
+  minutes per domain, and prints one line on stderr saying so. The names it already has are output while it waits.
+  Those repeats cost no units, though `-stats` counts each one as a request. Add `-ndxer-no-wait` to use what is there
+  at once; each list used that way is flagged as partial on stderr.
 - **Large organisations add many domains.** In one real run, one organisation's domain brought in **480 subject
   domains, and the run cost about 490 units**. That can be more than a small plan's month. On a small plan, either start with
   `-no-ndxer-related` and turn related scope on for the domains you care about, or move to a larger plan.
@@ -308,7 +312,9 @@ bounds the spend. The related lookup stops the same way and says so in the banne
 | `quota_exceeded` in an error, or `kept the first page` | This month's units are used up | Wait for the period to end (the message gives the date), raise your plan, or use `-max-results` / `-no-ndxer-related`. |
 | `rate_limited` / HTTP 429 | Requests per minute above your plan's limit | Add `-rls ndxer=<plan limit>/m`, with your plan's requests per minute from the pricing page. |
 | HTTP 503 or 429, or `gave up after 5 attempts` | Requests arrive faster than the API takes them, even after the retries | Lower `-rls ndxer=…` (for example to `3/s` or less) and run one subfinder process per key, with `-dL` for many domains. |
-| `ndxer is still looking up example.com; run again shortly` | ndxer had not seen the domain before and was still looking it up after 2 minutes | Run the same command again in a few minutes. Waiting costs no units. |
+| `ndxer was still looking up example.com after 15 minutes; run again shortly` | ndxer had not seen the domain before and was still looking it up after the whole wait | Run the same command again in a few minutes. Waiting costs no units. |
+| `ndxer hostnames for example.com are partial` | ndxer was still adding to the list, and either `-ndxer-no-wait` was set or the wait ran out | Run the same command again in a few minutes to get the rest. |
+| `were still partial when the run's time limit was reached` | subfinder's `-max-time` (10 minutes by default) ended the wait first | Raise `-max-time`, or run again later. |
 | Related scope added nothing | ndxer has no subject domains for this owner | The banner still lists review domains. Try `-ndxer-related-classes subject,review`. |
 | `subfinder -ls` doesn't list `ndxer` | You are running a plain subfinder binary | Run `which subfinder`, then reinstall with `@ndxer` ([step 2](#2-install)). |
 
