@@ -14,13 +14,15 @@ This is [subfinder](https://github.com/projectdiscovery/subfinder) with [ndxer](
 reads DNS both ways: from a domain to its names, and from a value back to every domain that publishes it. Give this
 build a domain and an ndxer API key, and it does two things subfinder on its own can't:
 
-1. **The `ndxer` source** lists every hostname ndxer has observed under the domain. That covers names with DNS records of
-   their own, and also hosts that other records point at: CNAME targets, mail servers, name servers, SPF includes
-   and SOA primaries. Names such as `mx1.example.com` or `ns2.example.com` often appear in no other source.
-2. **Related scope.** subfinder on its own only returns names under the domain you type. With an ndxer key, this build
+1. **Related scope.** subfinder on its own only returns names under the domain you type. With an ndxer key, this build
    first asks ndxer which other domains it links to the same owner, such as `example.net` or `example.org`, and
-   lists the names under those as well. This is **on by default**. Every run prints a banner that says what was added and why,
-   what was left out, and what it cost.
+   runs every selected source on those as well. This is **on by default**, and it is most of what ndxer adds: plain
+   subfinder never queries those domains, so none of their names reach you without it. Every run prints a banner
+   that says what was added and why, what was left out, and what it cost.
+2. **The `ndxer` source** lists the hostnames ndxer has observed under the domain. That covers names with DNS records
+   of their own, and also hosts that other records point at: CNAME targets, mail servers, name servers, SPF includes
+   and SOA primaries. Most of its names under a large domain are ones the free sources return too; the ones they
+   miss tend to be those pointed-at hosts, such as the backend behind an alias.
 
 Everything else works the same as the original subfinder: every other source, every flag, the output formats. The ndxer
 source and related scope run alongside the rest.
